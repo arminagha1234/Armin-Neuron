@@ -1,0 +1,229 @@
+=== PHASE A — TP=32, single-bucket [4096] ===
+[18:39:21] serveA launched
+[18:41:09] server ready after 19*6s
+[task1] regression @ 3900 (expect ~290 ms)
+/opt/conda/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+WARNING:root:Defaulting to PJRT_DEVICE=CPU
+2026-06-03 18:41:12,745 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:12,745 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:12,746 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+2026-06-03 18:41:12,746 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+INFO 06-03 18:41:12 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:12 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:12 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:12 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:12 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:12 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:12 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:14,266 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+2026-06-03 18:41:14,266 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+INFO 06-03 18:41:14 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:14,924 - INFO - gemma4_register.py:60 - Force-registered Gemma4ForConditionalGeneration in vllm.ModelRegistry
+2026-06-03 18:41:14,924 - INFO - sitecustomize.py:25 - [sitecustomize] Gemma4 registered
+Gemma4 TTFT bench [pathB_tp32_regression]  model=/root/models/gemma-4-31b-it  seq_lens=[3900]
+--- seq_len=3900 ---
+    FAILED
+
+================================================
+Gemma4 TTFT [pathB_tp32_regression] vs 500 ms
+ seq_len |   TTFT ms | result
+--------------------------------
+    3900 |       n/a | FAIL
+
+Saved /work/results/repo_update/run1_regression.json
+[task5] single-bucket TTFT scan
+/opt/conda/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+WARNING:root:Defaulting to PJRT_DEVICE=CPU
+2026-06-03 18:41:19,100 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:19,100 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:19,101 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+2026-06-03 18:41:19,101 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+INFO 06-03 18:41:19 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:19 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:19 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:19 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:19 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:19 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:19 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:20,548 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+2026-06-03 18:41:20,548 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+INFO 06-03 18:41:20 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:21,197 - INFO - gemma4_register.py:60 - Force-registered Gemma4ForConditionalGeneration in vllm.ModelRegistry
+2026-06-03 18:41:21,197 - INFO - sitecustomize.py:25 - [sitecustomize] Gemma4 registered
+Gemma4 TTFT bench [pathB_tp32_scan]  model=/root/models/gemma-4-31b-it  seq_lens=[256, 512, 1024, 2048, 3900]
+--- seq_len=256 ---
+    run 1: 312.5 ms
+    run 2: 287.7 ms
+    run 3: 287.3 ms
+    run 4: 286.8 ms
+    run 5: 290.1 ms
+  -> median 287.7 ms  PASS (target 500)
+--- seq_len=512 ---
+    run 1: 288.0 ms
+    run 2: 286.2 ms
+    run 3: 286.1 ms
+    run 4: 286.6 ms
+    run 5: 286.8 ms
+  -> median 286.6 ms  PASS (target 500)
+--- seq_len=1024 ---
+    run 1: 295.6 ms
+    run 2: 288.5 ms
+    run 3: 289.7 ms
+    run 4: 286.9 ms
+    run 5: 287.3 ms
+  -> median 288.5 ms  PASS (target 500)
+--- seq_len=2048 ---
+    run 1: 290.5 ms
+    run 2: 289.8 ms
+    run 3: 289.9 ms
+    run 4: 290.9 ms
+    run 5: 291.8 ms
+  -> median 290.5 ms  PASS (target 500)
+--- seq_len=3900 ---
+    FAILED
+
+================================================
+Gemma4 TTFT [pathB_tp32_scan] vs 500 ms
+ seq_len |   TTFT ms | result
+--------------------------------
+     256 |     287.7 | PASS
+     512 |     286.6 | PASS
+    1024 |     288.5 | PASS
+    2048 |     290.5 | PASS
+    3900 |       n/a | FAIL
+
+Saved /work/results/repo_update/run5_ttft_scan.json
+[task4] generation proof — 32 tokens
+/opt/conda/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+WARNING:root:Defaulting to PJRT_DEVICE=CPU
+2026-06-03 18:41:31,387 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:31,387 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:31,387 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+2026-06-03 18:41:31,387 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+INFO 06-03 18:41:31 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:31 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:31 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:31 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:31 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:31 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:31 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:32,857 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+2026-06-03 18:41:32,857 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+INFO 06-03 18:41:32 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:33,514 - INFO - gemma4_register.py:60 - Force-registered Gemma4ForConditionalGeneration in vllm.ModelRegistry
+2026-06-03 18:41:33,514 - INFO - sitecustomize.py:25 - [sitecustomize] Gemma4 registered
+{
+  "prompt": "The capital of France is",
+  "ttft_ms": 292.56875900318846,
+  "total_s": 10.942957564984681,
+  "n_tokens": 32,
+  "tpot_mean_ms": 343.554822805961,
+  "tpot_min_ms": 341.9202229997609,
+  "tpot_max_ms": 358.9900149963796,
+  "output": " Paris.\n\nThe capital of France is Paris.\n\nThe capital of France is Paris.\n\nThe capital of France is Paris.\n\nThe capital of France is"
+}
+[task3] throughput sweep TP=32 single-bucket [4096]
+/opt/conda/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+WARNING:root:Defaulting to PJRT_DEVICE=CPU
+2026-06-03 18:41:48,722 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:48,722 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 18:41:48,723 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+2026-06-03 18:41:48,723 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+INFO 06-03 18:41:48 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:48 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:48 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:48 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 18:41:48 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 18:41:48 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 18:41:48 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:50,190 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+2026-06-03 18:41:50,190 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+INFO 06-03 18:41:50 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 18:41:50,854 - INFO - gemma4_register.py:60 - Force-registered Gemma4ForConditionalGeneration in vllm.ModelRegistry
+2026-06-03 18:41:50,854 - INFO - sitecustomize.py:25 - [sitecustomize] Gemma4 registered
+Input tokens: 1024, output tokens: 256
+Warmup...
+
+--- concurrency=1, 2 requests ---
+  wall=175.6s  out_tokens=512
+  THROUGHPUT: 2.9 tok/s = 175 tok/min  (avg latency 87.8s)
+
+--- concurrency=4, 8 requests ---
+  wall=177.2s  out_tokens=2048
+  THROUGHPUT: 11.6 tok/s = 693 tok/min  (avg latency 88.6s)
+
+--- concurrency=8, 16 requests ---
+  wall=354.4s  out_tokens=4096
+  THROUGHPUT: 11.6 tok/s = 693 tok/min  (avg latency 155.0s)
+
+--- concurrency=16, 32 requests ---
+  wall=708.8s  out_tokens=8192
+  THROUGHPUT: 11.6 tok/s = 693 tok/min  (avg latency 287.9s)
+
+========================================================
+MAX THROUGHPUT: 693 tok/min at concurrency=4
+ conc |    tok/s |    tok/min | avg lat (s)
+    1 |      2.9 |        175 |        87.8
+    4 |     11.6 |        693 |        88.6
+    8 |     11.6 |        693 |       155.1
+   16 |     11.6 |        693 |       287.9
+
+Saved /work/results/repo_update/run3_throughput.json
+[19:07:08] PHASE A complete.
+
+=== PHASE B — TP=32, single-bucket [8192] ===
+[19:07:08] serveB launched (8K bucket may need cold compile, ~25 min)
+[19:09:08] server ready after 21*6s
+[task2] 8K TTFT @ TP=32 single-bucket [8192]
+/opt/conda/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+WARNING:root:Defaulting to PJRT_DEVICE=CPU
+2026-06-03 19:09:11,695 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 19:09:11,695 - INFO - xla_collectives.py:211 - ✓ Custom XLA implementations registered via torch.library.impl (all_reduce, all_gather, reduce_scatter, all_to_all)
+2026-06-03 19:09:11,696 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+2026-06-03 19:09:11,696 - INFO - port_hold_patch.py:204 - Port-hold patch applied (EADDRINUSE file-rendezvous)
+INFO 06-03 19:09:11 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 19:09:11 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 19:09:11 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 19:09:11 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-03 19:09:11 [__init__.py:46] - neuron -> vllm_neuron:register
+INFO 06-03 19:09:11 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-03 19:09:11 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 19:09:13,154 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+2026-06-03 19:09:13,154 - WARNING - platform.py:61 - Failed to patch DCP config validation: cannot import name 'get_tensor_model_parallel_rank' from partially initialized module 'vllm.distributed' (most likely due to a circular import) (/opt/conda/lib/python3.12/site-packages/vllm/distributed/__init__.py)
+INFO 06-03 19:09:13 [__init__.py:239] Platform plugin neuron is activated
+2026-06-03 19:09:13,803 - INFO - gemma4_register.py:60 - Force-registered Gemma4ForConditionalGeneration in vllm.ModelRegistry
+2026-06-03 19:09:13,803 - INFO - sitecustomize.py:25 - [sitecustomize] Gemma4 registered
+Gemma4 TTFT bench [pathB_tp32_8k]  model=/root/models/gemma-4-31b-it  seq_lens=[7800]
+--- seq_len=7800 ---
+    FAILED
+
+================================================
+Gemma4 TTFT [pathB_tp32_8k] vs 500 ms
+ seq_len |   TTFT ms | result
+--------------------------------
+    7800 |       n/a | FAIL
+
+Saved /work/results/repo_update/run2_ttft_8k.json
+
+=== ALL DONE ===
+total 2336
+drwxr-xr-x. 2 root   root    16384 Jun  3 19:09 .
+drwxrwxr-x. 3 ubuntu ubuntu  16384 Jun  3 18:34 ..
+-rw-r--r--. 1 root   root    15633 Jun  3 19:09 orchestrator.log
+-rw-r--r--. 1 root   root     2755 Jun  3 18:41 run1.log
+-rw-r--r--. 1 root   root      198 Jun  3 18:41 run1_regression.json
+-rw-r--r--. 1 root   root     2736 Jun  3 19:09 run2.log
+-rw-r--r--. 1 root   root      190 Jun  3 19:09 run2_ttft_8k.json
+-rw-r--r--. 1 root   root     3321 Jun  3 19:06 run3.log
+-rw-r--r--. 1 root   root      946 Jun  3 19:06 run3_throughput.json
+-rw-r--r--. 1 root   root     2779 Jun  3 18:41 run4.log
+-rw-r--r--. 1 root   root      390 Jun  3 18:41 run4_gen.json
+-rw-r--r--. 1 root   root     3518 Jun  3 18:41 run5.log
+-rw-r--r--. 1 root   root      910 Jun  3 18:41 run5_ttft_scan.json
+-rw-r--r--. 1 root   root   831749 Jun  3 19:06 serveA.log
+-rw-r--r--. 1 root   root   727701 Jun  3 19:09 serveB.log

@@ -1,0 +1,12 @@
+{
+  "tag": "pathB_tp32_8k",
+  "model": "/root/models/gemma-4-31b-it",
+  "target_ms": 500.0,
+  "results": [
+    {
+      "seq_len": 7800,
+      "ttft_ms": null,
+      "pass": false
+    }
+  ]
+}

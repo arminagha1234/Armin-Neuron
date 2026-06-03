@@ -1,16 +1,31 @@
 # Gemma4 31B IT on vLLM-Neuron (AWS Trainium2)
 
 Serve Google's Gemma 4 31B IT on a trn2.48xlarge using the vLLM-Neuron plugin.
-**294 ms TTFT at 4K input tokens** with TP=32.
+**293 ms TTFT @ 4K input** with TP=32 single-bucket — 41% under the 500 ms target.
 
 ---
 
 ## Results
 
-| Input Tokens | TP | TTFT (ms) |
-|---:|---:|---:|
-| ~3900 | 16 | 452 |
-| **~3900** | **32** | **294** |
+All numbers measured on `trn2.48xlarge` (us-east-2), vLLM-Neuron v5 beta,
+bf16, on-device greedy sampling.
+
+| Input | TP | Bucket | TTFT (median) | Throughput | Status |
+|---:|---:|---:|---:|---:|---|
+| 4K | 16 | `[4096]` | 452 ms | — | passes 500 ms target |
+| **4K** | **32** | **`[4096]`** | **293 ms ✅** | **693 tok/min @ conc=4** | **best 4K config (41% under target)** |
+| 8K | 32 | `[8192]` | 659 ms ❌ | (not measured) | misses 500 ms target by 32% |
+
+**Generation proof** (TP=32, single-bucket `[4096]`):
+> "The capital of France is" → " Paris.\n\nThe capital of France is Paris..."
+> TTFT 292.6 ms · TPOT 343 ms · 32 tokens in 10.94 s
+
+Full benchmark detail (TTFT scan, throughput sweep, 8K, generation):
+[`improvements-gemma4-partB/RESULTS.md`](improvements-gemma4-partB/RESULTS.md)
+
+NKI kernel investigation (kernels validated on device, then honestly
+characterized vs the compiled NxDI baseline):
+[`improvements-gemma4-partC/`](improvements-gemma4-partC/)
 
 ---
 

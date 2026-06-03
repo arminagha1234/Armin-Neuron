@@ -1,0 +1,10 @@
+{
+  "prompt": "The capital of France is",
+  "ttft_ms": 292.56875900318846,
+  "total_s": 10.942957564984681,
+  "n_tokens": 32,
+  "tpot_mean_ms": 343.554822805961,
+  "tpot_min_ms": 341.9202229997609,
+  "tpot_max_ms": 358.9900149963796,
+  "output": " Paris.\n\nThe capital of France is Paris.\n\nThe capital of France is Paris.\n\nThe capital of France is Paris.\n\nThe capital of France is"
+}

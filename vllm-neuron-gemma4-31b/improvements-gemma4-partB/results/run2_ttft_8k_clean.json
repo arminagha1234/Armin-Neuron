@@ -1,0 +1,15 @@
+{
+  "tag": "pathB_tp32_8k_clean",
+  "actual_input_tokens": 7800,
+  "ttft_median_ms": 658.5,
+  "ttft_min_ms": 656.9,
+  "ttft_max_ms": 688.7,
+  "all_ms": [
+    656.9,
+    658.3,
+    658.5,
+    659.7,
+    688.7
+  ],
+  "pass": false
+}

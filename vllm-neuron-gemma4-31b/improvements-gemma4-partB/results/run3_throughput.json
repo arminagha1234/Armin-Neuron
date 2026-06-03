@@ -1,0 +1,45 @@
+{
+  "model": "/root/models/gemma-4-31b-it",
+  "input_tokens": 1024,
+  "output_tokens": 256,
+  "results": [
+    {
+      "concurrency": 1,
+      "requests": 2,
+      "wall_s": 175.55,
+      "out_tokens": 512,
+      "tokens_per_s": 2.9,
+      "tokens_per_min": 175,
+      "avg_latency_s": 87.77
+    },
+    {
+      "concurrency": 4,
+      "requests": 8,
+      "wall_s": 177.22,
+      "out_tokens": 2048,
+      "tokens_per_s": 11.6,
+      "tokens_per_min": 693,
+      "avg_latency_s": 88.61
+    },
+    {
+      "concurrency": 8,
+      "requests": 16,
+      "wall_s": 354.41,
+      "out_tokens": 4096,
+      "tokens_per_s": 11.6,
+      "tokens_per_min": 693,
+      "avg_latency_s": 155.05
+    },
+    {
+      "concurrency": 16,
+      "requests": 32,
+      "wall_s": 708.79,
+      "out_tokens": 8192,
+      "tokens_per_s": 11.6,
+      "tokens_per_min": 693,
+      "avg_latency_s": 287.94
+    }
+  ],
+  "max_tokens_per_min": 693,
+  "max_at_concurrency": 4
+}
