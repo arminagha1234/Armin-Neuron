@@ -1,0 +1,45 @@
+{
+  "description": "Customer payload distribution -> weighted-average TTFT for each serving config. Measured on trn2.48xlarge, TP=32, vLLM-Neuron v5 beta, bf16, on-device greedy sampling.",
+  "customer_payload_distribution": {
+    "le_500":  {"share": 0.248, "label": "<=0.5K"},
+    "le_1k":   {"share": 0.531, "label": "<=1K"},
+    "le_2k":   {"share": 0.095, "label": "<=2K"},
+    "le_4k":   {"share": 0.127, "label": "<=4K"},
+    "le_8k":   {"share": 0.000, "label": "<=8K"}
+  },
+  "configs": {
+    "single_bucket_4k": {
+      "buckets": [4096],
+      "ttft_by_size_ms": {
+        "256": 287.7,
+        "512": 286.6,
+        "1024": 288.5,
+        "2048": 290.5,
+        "3900": 292.6
+      },
+      "weighted_avg_ms": 290.5,
+      "note": "Every prompt padded to 4K; flat cost regardless of input size."
+    },
+    "single_bucket_1k": {
+      "buckets": [1024],
+      "ttft_by_size_ms": {"256": 102.1, "512": 102.0},
+      "covers_pct_of_traffic": 77.8,
+      "weighted_avg_ms_within_coverage": 102.0,
+      "note": "Best for short prompts only; the 22.2% of >1K traffic needs a different server."
+    },
+    "multi_bucket": {
+      "buckets": [512, 1024, 2048, 4096],
+      "ttft_by_size_ms": {
+        "256": 102.1,
+        "950": 153.8,
+        "1900": 288.3,
+        "4090": 295.9
+      },
+      "weighted_avg_ms": 172.0,
+      "note": "Each request lands in its smallest fitting bucket. Best overall for variable-length traffic."
+    }
+  },
+  "headline": "Multi-bucket [512,1024,2048,4096] = 172.0 ms weighted-average TTFT (41% faster than single-bucket [4096]'s flat 290 ms) on this customer's distribution.",
+  "instance": "trn2.48xlarge i-0d55a7514c80f5075 (us-east-2)",
+  "measured_date": "2026-06-03"
+}

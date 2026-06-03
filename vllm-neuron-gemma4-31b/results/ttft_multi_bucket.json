@@ -1,0 +1,60 @@
+{
+  "tag": "pathB_tp32_multi",
+  "model": "/root/models/gemma-4-31b-it",
+  "target_ms": 500.0,
+  "results": [
+    {
+      "seq_len": 256,
+      "ttft_ms": 82.0,
+      "all_ms": [
+        78.6,
+        79.9,
+        82.0,
+        83.3,
+        106.9
+      ],
+      "pass": true
+    },
+    {
+      "seq_len": 500,
+      "ttft_ms": 102.1,
+      "all_ms": [
+        101.0,
+        101.9,
+        102.1,
+        105.0,
+        106.2
+      ],
+      "pass": true
+    },
+    {
+      "seq_len": 950,
+      "ttft_ms": 153.8,
+      "all_ms": [
+        153.1,
+        153.4,
+        153.8,
+        154.3,
+        156.7
+      ],
+      "pass": true
+    },
+    {
+      "seq_len": 1900,
+      "ttft_ms": 288.3,
+      "all_ms": [
+        287.9,
+        288.3,
+        288.3,
+        288.4,
+        291.2
+      ],
+      "pass": true
+    },
+    {
+      "seq_len": 3900,
+      "ttft_ms": null,
+      "pass": false
+    }
+  ]
+}

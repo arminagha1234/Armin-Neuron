@@ -1,0 +1,36 @@
+{
+  "tag": "pathB_tp32_single1024",
+  "model": "/root/models/gemma-4-31b-it",
+  "target_ms": 500.0,
+  "results": [
+    {
+      "seq_len": 256,
+      "ttft_ms": 102.1,
+      "all_ms": [
+        100.1,
+        101.9,
+        102.1,
+        103.6,
+        126.9
+      ],
+      "pass": true
+    },
+    {
+      "seq_len": 512,
+      "ttft_ms": 102.0,
+      "all_ms": [
+        100.6,
+        101.5,
+        102.0,
+        103.3,
+        103.3
+      ],
+      "pass": true
+    },
+    {
+      "seq_len": 950,
+      "ttft_ms": null,
+      "pass": false
+    }
+  ]
+}

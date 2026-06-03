@@ -1,0 +1,14 @@
+{
+  "tag": "multi_bucket_4k_clean",
+  "actual_input_tokens": 4090,
+  "ttft_median_ms": 295.9,
+  "ttft_min_ms": 295.5,
+  "ttft_max_ms": 304.5,
+  "all_ms": [
+    295.5,
+    295.9,
+    295.9,
+    297.5,
+    304.5
+  ]
+}
