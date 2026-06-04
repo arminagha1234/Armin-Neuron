@@ -1,0 +1,79 @@
+DeepSeek V3.2 — Decode NEFF schedule failure (the wall we hit)
+================================================================
+Captured: 2026-06-04 13:04:53Z
+Source: /work/8l_512.log on i-0d55a7514c80f5075
+
+After 3 successful patches (FX rewrite O(N²)→O(K), get_tensor_names
+shim, no-op barrier), the model successfully:
+  1. Loaded all 64 ranks
+  2. Compiled all prefill NEFFs across multiple bucket sizes
+  3. Warmed up successfully for prefill bucket=128 AND bucket=1024
+  4. Reached the decode warmup phase
+
+Then died at the SAME point regardless of max_model_len:
+  - max_model_len=2048 → decode warmup failed at seq=2048 with Allocation Failure
+  - max_model_len=1024 → decode warmup failed at seq=1024 with status=1 Unknown
+  - max_model_len=512  → decode warmup failed at seq=512 with status=1 Unknown
+
+Exact stack trace at seq=512:
+
+(Worker_TP0) ERROR _warmup_decode (neuron_worker.py:1097)
+  warmup_decode(batch_size, ctx_bucket=ctx_bucket)
+                       (neuron_model_runner.py:3245)
+    _ = self.model(**kwargs)              <-- decode forward
+                       (torch/_dynamo/eval_frame.py:465 __call__)
+                       (vllm_neuron/compile/backend.py:534 __call__)
+      self.executor.execute(tuple(filtered_inputs), outputs)
+        RuntimeError: Failed to schedule neff execution.
+                      status=1 message=Unknown Failure
+
+This is a NEURON RUNTIME error — the decode NEFF compiled successfully
+and was loaded onto the device, but the runtime cannot schedule its
+execution. This is BELOW the Python layer where our patches operate.
+
+Where Allocation Failure (seq=2048) came from:
+  RuntimeError: Could not load the model status=4 message=Allocation Failure
+  during prefill bucket=2048 warmup
+  -> activation memory + KV cache + weight shards exceed
+     the per-NeuronCore budget at seq=2048
+
+Where Unknown Failure (seq=512, 1024) came from:
+  After successful prefill warmup at the same seq_len,
+  the decode NEFF attempts to execute and fails.
+  This is NOT memory pressure (smaller seq, prefill at same
+  seq worked). The NEFF is malformed in some way the runtime
+  rejects without a precise error code.
+
+Possible root causes (informed speculation, would need AWS team
+internal compile logs to confirm):
+  - DSA Lightning Indexer top-k output: stride or contiguity
+    mismatch in the decode-path NEFF
+  - KV cache update: scatter op pattern that's valid in HLO
+    but the v5 runtime can't translate to NeuronCore ISA
+  - MoE routing in decode: the eager-mode dispatch path
+    differs from prefill, and may emit ops not yet supported
+    by this runtime version
+  - Compile/runtime ABI mismatch between PR #2025 (developed
+    against newer vllm_neuron) and v5 beta image's runtime
+
+What we PROVED works:
+  ✅ Model code loads (all 4 patches valid)
+  ✅ Weight loading: 643 GB FP8 → BF16 streaming dequant in 17-209s/rank
+  ✅ Graph capture: FX inplace pass finishes in seconds (was hours)
+  ✅ HLO compilation: 64 NEFFs per bucket, 3-7 min each
+  ✅ Prefill execution: bucket=128 and bucket=1024 ran successfully
+  ✅ TP=64 init across 16 trn2 chips
+  ✅ Barrier no-ops let workers proceed past compile
+
+What we COULDN'T get past:
+  ❌ Decode NEFF schedule (every sequence length, every config)
+
+Recommended escalation to AWS Neuron team:
+  - Reference PR #2025 head SHA: 9b41995e16d1a7467511a78a4912d703d79ce780
+  - Reference v5 beta image: pr-655cd3ee9b8d69818e52f37fbe1bb2a445bfbd60
+  - The four patches required to even reach the decode warmup
+    are documented in this folder; suggest these be
+    incorporated upstream so others don't repeat the trap.
+  - Ask: can decode NEFF for DeepSeek V3.2 be debugged with
+    NEURON_RT_INSPECT_DEVICE_PROFILE=1 to capture the
+    schedule failure context?
