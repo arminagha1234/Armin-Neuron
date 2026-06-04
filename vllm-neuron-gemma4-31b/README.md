@@ -287,23 +287,34 @@ vocab 262144.
 
 ## Files
 
+Every file below is on the live serve/bench path. No dead code.
+
 ```
 ├── README.md                        # This file
-├── gemma4/                          # Model package
-├── gemma4_register.py               # Runtime model registration
-├── gemma4_transformers_stub.py      # Config stub for transformers 4.x
-├── sitecustomize.py                 # Auto-registration on import
-├── make_local_model.py              # Build patched local model dir
-├── bench_ttft.py                    # TTFT benchmark
-├── bench_throughput.py              # Throughput benchmark
-├── bench_distribution.py            # Distribution-aware bench (customer mix)
-└── results/                         # Raw measurement JSONs
-    ├── ttft_single_bucket_4k.json   # Flat 290 ms scan
-    ├── ttft_multi_bucket.json       # Per-bucket TTFT scan
-    ├── ttft_8k_clean.json           # 8K bucket measurement
-    ├── ttft_distribution.json       # Weighted-avg summary
-    ├── throughput.json              # Concurrency sweep
-    └── generation_proof.json        # End-to-end gen sample
+├── sitecustomize.py                 # Python auto-import → installs stub + registers Gemma4
+├── gemma4_transformers_stub.py     # Teaches transformers' AutoConfig about model_type=gemma4
+├── gemma4_register.py               # Registers Gemma4ForConditionalGeneration in vLLM's ModelRegistry
+├── gemma4/                          # Model package — the runtime path
+│   ├── __init__.py                  # exports the arch class
+│   ├── factory.py                   # Gemma4ForConditionalGeneration (vLLM-facing wrapper)
+│   ├── config.py                    # Gemma4Config + NeuronConfig glue
+│   └── model.py                     # The actual model: TP-sharded SWA+Global attn, GeGLU MLP,
+│                                    #   QK/V norm, partial RoPE, logit softcap, weight loading.
+│                                    #   Calls vllm_neuron.functional (NF.qkv_proj, NF.flash_attention,
+│                                    #   NF.attention_decode, NF.o_proj, etc.).
+├── make_local_model.py              # One-time: build /root/models/gemma-4-31b-it with patched tokenizer
+├── bench_ttft.py                    # → ttft_single_bucket_*.json, ttft_multi_bucket*.json, ttft_8k_clean.json
+├── bench_distribution.py            # → ttft_distribution.json (the 172 ms weighted-avg headline)
+├── bench_throughput.py              # → throughput.json (the concurrency sweep)
+└── results/                         # Raw measurement JSONs from the three bench scripts above
+    ├── ttft_single_bucket_1k.json   # TP=32, [1024] bucket scan
+    ├── ttft_single_bucket_4k.json   # TP=32, [4096] flat 290 ms scan
+    ├── ttft_multi_bucket.json       # TP=32, [512,1024,2048,4096] per-bucket scan
+    ├── ttft_multi_bucket_4k_clean.json  # 4K-only re-measure with multi-bucket NEFFs warm
+    ├── ttft_8k_clean.json           # TP=32, [8192] bucket measurement
+    ├── ttft_distribution.json       # Weighted-avg summary (172 ms headline)
+    ├── throughput.json              # Concurrency sweep (TP=32, in=1024 / out=256)
+    └── generation_proof.json        # End-to-end gen sample ("The capital of France is …")
 ```
 
 ## License

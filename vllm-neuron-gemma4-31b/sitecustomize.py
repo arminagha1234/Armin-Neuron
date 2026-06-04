@@ -8,8 +8,6 @@ this on PYTHONPATH makes the registration run inside the vllm server process
 """
 import logging
 
-import os
-
 # Teach transformers about the gemma4 config types BEFORE vLLM calls AutoConfig.
 try:
     import gemma4_transformers_stub
@@ -25,12 +23,3 @@ try:
     logging.getLogger(__name__).info("[sitecustomize] Gemma4 registered")
 except Exception as exc:  # never block startup on this
     logging.getLogger(__name__).warning("[sitecustomize] Gemma4 register skipped: %r", exc)
-
-# Path B: apply the (gated) TTFT optimization patches when GEMMA4_APPLY_PATHB=1.
-if os.environ.get("GEMMA4_APPLY_PATHB") == "1":
-    try:
-        import patch_pathB
-        patch_pathB.apply_pathB_patches()
-        logging.getLogger(__name__).info("[sitecustomize] Path B patches applied")
-    except Exception as exc:
-        logging.getLogger(__name__).warning("[sitecustomize] Path B patch skipped: %r", exc)
