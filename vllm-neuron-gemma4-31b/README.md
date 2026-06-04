@@ -38,15 +38,21 @@ Customer's payload distribution: 24.8% ≤0.5K, 53.1% ≤1K, 9.5% ≤2K, 12.7% �
 
 ### Throughput (TP=32, single-bucket [4096], in=1024 / out=256)
 
-| Concurrency | Tokens/min | Per-request latency |
-|---:|---:|---:|
-| 1 | 175 | 87.8 s |
-| **4** | **693** | 88.6 s |
-| 8 | 693 (capped) | 155 s |
-| 16 | 693 (capped) | 288 s |
+> TPOT is bound at ~343 ms/token (≈2.9 tok/s per request) by the head_dim>128
+> SDPA decode fallback. Aggregate throughput scales with `max_num_seqs` until
+> that ceiling. Above concurrency=4, requests just queue.
 
-Throughput plateaus at concurrency 4 due to `max_num_seqs=4`. Raise it for
-sustained throughput at the cost of more KV-cache HBM.
+| Concurrency | Aggregate tok/s | Per-req tok/s | Per-req latency |
+|---:|---:|---:|---:|
+| 1 | 2.9 | 2.9 | 87.8 s |
+| **4** | **11.6** | **2.9** | **88.6 s** |
+| 8 | 11.6 (queued) | 1.6 | 155 s |
+| 16 | 11.6 (queued) | 0.9 | 288 s |
+
+Throughput plateaus at concurrency 4 because `max_num_seqs=4`. Concurrency 8
+and 16 don't add throughput — they just queue, and per-request latency grows
+linearly. Raise `max_num_seqs` to lift the ceiling at the cost of more
+KV-cache HBM.
 
 ### Generation Proof
 
