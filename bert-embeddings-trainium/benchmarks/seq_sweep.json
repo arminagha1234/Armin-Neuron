@@ -1,0 +1,62 @@
+[
+  {
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "seq_len": 128,
+    "compile_tput_s": 2.69,
+    "compile_lat_s": 1.44,
+    "throughput_N128_seqps": 2684.3,
+    "throughput_N128_ms_per": 0.373,
+    "latency_b1_p50_ms": 1.212,
+    "latency_b1_p99_ms": 1.355
+  },
+  {
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "seq_len": 256,
+    "compile_tput_s": 1.63,
+    "compile_lat_s": 1.29,
+    "throughput_N128_seqps": 2661.9,
+    "throughput_N128_ms_per": 0.376,
+    "latency_b1_p50_ms": 1.165,
+    "latency_b1_p99_ms": 1.263
+  },
+  {
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "seq_len": 512,
+    "compile_tput_s": 1.95,
+    "compile_lat_s": 1.48,
+    "throughput_N128_seqps": 1038.5,
+    "throughput_N128_ms_per": 0.963,
+    "latency_b1_p50_ms": 1.683,
+    "latency_b1_p99_ms": 1.735
+  },
+  {
+    "model": "BAAI/bge-base-en-v1.5",
+    "seq_len": 128,
+    "compile_tput_s": 2.65,
+    "compile_lat_s": 2.3,
+    "throughput_N128_seqps": 1990.5,
+    "throughput_N128_ms_per": 0.502,
+    "latency_b1_p50_ms": 2.825,
+    "latency_b1_p99_ms": 3.001
+  },
+  {
+    "model": "BAAI/bge-base-en-v1.5",
+    "seq_len": 256,
+    "compile_tput_s": 20.88,
+    "compile_lat_s": 13.3,
+    "throughput_N128_seqps": 449.1,
+    "throughput_N128_ms_per": 2.227,
+    "latency_b1_p50_ms": 43.108,
+    "latency_b1_p99_ms": 44.76
+  },
+  {
+    "model": "BAAI/bge-base-en-v1.5",
+    "seq_len": 512,
+    "compile_tput_s": 31.98,
+    "compile_lat_s": 13.23,
+    "throughput_N128_seqps": 181.9,
+    "throughput_N128_ms_per": 5.499,
+    "latency_b1_p50_ms": 37.686,
+    "latency_b1_p99_ms": 39.801
+  }
+]

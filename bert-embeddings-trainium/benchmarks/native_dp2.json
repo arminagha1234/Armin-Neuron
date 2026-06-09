@@ -1,0 +1,8 @@
+{
+  "n_total": 4096,
+  "wall_s": 0.2843,
+  "dp2_seq_per_s": 14407.3,
+  "per_worker_A": 7204.6,
+  "per_worker_B": 7295.3,
+  "model": "sentence-transformers/all-MiniLM-L6-v2"
+}

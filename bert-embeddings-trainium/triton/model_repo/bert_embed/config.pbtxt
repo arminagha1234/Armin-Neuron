@@ -1,0 +1,50 @@
+# Triton Inference Server config for BERT embeddings on Trainium
+# (native PyTorch + torch.compile path)
+#
+# Inputs:  PROMPTS  — list of UTF-8 byte strings (variable length)
+# Outputs: EMBEDDING — float32 tensor [N, hidden_dim], one row per prompt
+
+name: "bert_embed"
+backend: "python"
+
+# Tokenizer + model are owned by the Python backend; static-shape NEFFs are
+# compiled per batch size at startup. max_batch_size is the largest bucket
+# we'll dispatch into; smaller requests pad up to the nearest compiled bucket.
+max_batch_size: 512
+
+input [
+  {
+    name: "PROMPTS"
+    data_type: TYPE_STRING
+    dims: [ -1 ]            # variable-length string per row
+  }
+]
+
+output [
+  {
+    name: "EMBEDDING"
+    data_type: TYPE_FP32
+    dims: [ -1 ]            # hidden_dim — 384 (MiniLM) or 768 (bge-base)
+  }
+]
+
+instance_group [
+  {
+    kind: KIND_MODEL        # let our Python backend control device placement
+    count: 1                # set to 2 for the DP=2 setup (one per logical core)
+  }
+]
+
+# Dynamic batcher gathers concurrent client requests up to one of our compiled
+# bucket sizes. Buckets must match the BUCKETS env var the Python model uses.
+dynamic_batching {
+  preferred_batch_size: [ 1, 8, 32, 128, 512 ]
+  max_queue_delay_microseconds: 5000     # 5 ms — tune for the latency SLO
+}
+
+# Tokenizer + model paths and batch buckets are read from env vars in model.py:
+#   BERT_MODEL          (default: sentence-transformers/all-MiniLM-L6-v2)
+#   BERT_MAX_LEN        (default: 128)
+#   BERT_BUCKETS        (default: 1,8,32,128,512)
+#
+# Set in the Triton container's environment when launching tritonserver.

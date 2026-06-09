@@ -1,0 +1,33 @@
+{
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "use_nki": false,
+  "use_compile": true,
+  "cold_s": 2.23,
+  "throughput_N32": {
+    "prompts": 32,
+    "seconds": 0.0049,
+    "seq_per_s": 6475.8,
+    "ms_per_prompt": 0.154
+  },
+  "throughput_N128": {
+    "prompts": 128,
+    "seconds": 0.0478,
+    "seq_per_s": 2675.6,
+    "ms_per_prompt": 0.374
+  },
+  "throughput_N512": {
+    "prompts": 512,
+    "seconds": 0.0714,
+    "seq_per_s": 7170.5,
+    "ms_per_prompt": 0.139
+  },
+  "latency_single": {
+    "calls": 64,
+    "p50_ms": 1.087,
+    "p90_ms": 1.119,
+    "p99_ms": 1.285,
+    "min_ms": 1.028,
+    "max_ms": 1.378,
+    "mean_ms": 1.093
+  }
+}
