@@ -1,0 +1,33 @@
+{
+  "model": "BAAI/bge-base-en-v1.5",
+  "use_nki": false,
+  "use_compile": true,
+  "cold_s": 25.12,
+  "throughput_N32": {
+    "prompts": 32,
+    "seconds": 0.0167,
+    "seq_per_s": 1911.9,
+    "ms_per_prompt": 0.523
+  },
+  "throughput_N128": {
+    "prompts": 128,
+    "seconds": 0.0645,
+    "seq_per_s": 1985.2,
+    "ms_per_prompt": 0.504
+  },
+  "throughput_N512": {
+    "prompts": 512,
+    "seconds": 0.2078,
+    "seq_per_s": 2464.1,
+    "ms_per_prompt": 0.406
+  },
+  "latency_single": {
+    "calls": 64,
+    "p50_ms": 2.673,
+    "p90_ms": 2.686,
+    "p99_ms": 2.716,
+    "min_ms": 2.659,
+    "max_ms": 2.753,
+    "mean_ms": 2.675
+  }
+}

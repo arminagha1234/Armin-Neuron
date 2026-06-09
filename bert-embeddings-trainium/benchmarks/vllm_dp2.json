@@ -1,0 +1,39 @@
+{
+  "n_total": 4096,
+  "wall_s": 3.8105,
+  "dp2_seq_per_s": 1074.9,
+  "baseline_seq_per_s": 590.9,
+  "speedup": 1.819,
+  "worker_A": {
+    "worker_id": "A",
+    "n_prompts": 2048,
+    "boot_s": 14.094,
+    "embed_s": 3.8105,
+    "seq_per_s": 537.5,
+    "ms_per_prompt": 1.861,
+    "dim": 384,
+    "first5_of_p0": [
+      -0.5352,
+      -0.1436,
+      0.1436,
+      0.085,
+      -0.1216
+    ]
+  },
+  "worker_B": {
+    "worker_id": "B",
+    "n_prompts": 2048,
+    "boot_s": 21.258,
+    "embed_s": 3.762,
+    "seq_per_s": 544.4,
+    "ms_per_prompt": 1.837,
+    "dim": 384,
+    "first5_of_p0": [
+      -0.5352,
+      -0.1436,
+      0.1436,
+      0.085,
+      -0.1216
+    ]
+  }
+}
