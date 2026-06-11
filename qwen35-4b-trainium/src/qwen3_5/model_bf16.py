@@ -329,80 +329,39 @@ class Qwen3_5GQAAttention(nn.Module):
         self.k_cache = None
         self.v_cache = None
 
-        # Path D: FP8 KV cache scales. Per-layer calibrated, loaded from
-        # kv_scales.json (produced by tools/calibrate_kv_scales.py).
+        # Path D: FP8 KV cache scales. Registered as buffers (not Parameters)
+        # because the safetensors checkpoint doesn't ship `k_scale`/`v_scale`
+        # keys — registering as Parameters trips strict weight loading.
         #
-        # Calibration history & rationale:
-        #   scale=32 (uniform) → 4/6 correct, "useruser..." drift
-        #     (over-saturation: clamps |x|>7.5, max_abs varies 7-52 across layers)
-        #   scale=1.0 (uniform) → 5/6 correct, drift after token 2
-        #     (under-utilization: only ~3 mantissa bits in normalized range)
-        #   scale=8.0 (uniform) → 4/6 correct, less drift but still wrong
-        #     (still wrong for layers needing scale 4 or scale 28)
-        #   scale=PER-LAYER (this) → real win:
-        #     each GQA layer gets `k_scale = 240*0.9/max_abs_K` from
-        #     calibration sample. Range: 4.15 to 28.68 across the 8
-        #     GQA layers in Qwen3.5-4B (every-4th-layer pattern).
+        # Default scale = 8.0 (empirical sweet spot between scale=1 and scale=32).
         #
-        # Buffers are registered (not Parameters) because the original
-        # safetensors checkpoint doesn't ship `k_scale`/`v_scale` keys.
-        # Registering as Parameters would trip strict weight loading.
-        # If kv_scales.json is missing or doesn't have an entry for this
-        # layer, fall back to the empirical static scale (8.0) — which
-        # is what's used for DeltaNet layers (which never write FP8 KV).
-        k_scale_init, v_scale_init = self._load_calibrated_kv_scales(layer_idx)
+        # Iteration history (Qwen3.5-4B, MAX_LEN=2048 BUCKET=2048 max_seqs=8):
+        #   scale=32 → 4/6 first-token correctness, drift to "useruser..."
+        #              (over-saturation: clamps any |x|>7.5, kills outlier heads)
+        #   scale=1.0 → 5/6 first-token correctness, drift to "user..." after
+        #              tokens 2-3 (under-utilization: only ~3 mantissa bits in
+        #              the [-1, 1] range typical of normalized K/V values).
+        #   scale=8.0 → maps typical [-1, 1] K/V into [-8, 8], using ~5 bits
+        #              of FP8 precision; only |x|>30 saturates (rare on
+        #              Qwen3.5-4B's K/V distributions). This balances
+        #              precision vs. saturation for static-scale FP8 KV.
+        # TODO: per-layer calibrated scales loaded from a kv_scales.json
+        # produced by an offline CPU calibration pass. Static scale is a
+        # compromise.
         self.register_buffer(
             "k_scale",
-            torch.tensor(k_scale_init, dtype=torch.float32, device="cpu"),
+            torch.tensor(8.0, dtype=torch.float32, device="cpu"),
             persistent=False,
         )
         self.register_buffer(
             "v_scale",
-            torch.tensor(v_scale_init, dtype=torch.float32, device="cpu"),
+            torch.tensor(8.0, dtype=torch.float32, device="cpu"),
             persistent=False,
         )
-        self.k_scale_float = float(k_scale_init)
-        self.v_scale_float = float(v_scale_init)
+        self.k_scale_float = 8.0
+        self.v_scale_float = 8.0
 
         self._setup_weight_loaders()
-
-    @staticmethod
-    def _load_calibrated_kv_scales(layer_idx: int) -> tuple[float, float]:
-        """Load per-layer FP8 KV scales from kv_scales.json.
-
-        Search order (first found wins):
-          1. ${KV_SCALES_PATH} env var
-          2. /work/qwen35/kv_scales.json
-          3. /data/kv_scales.json
-          4. <package_dir>/kv_scales.json
-          5. Fallback: (8.0, 8.0) static — same as the prior empirical default
-
-        Returns (k_scale, v_scale) for this specific layer_idx. Layers
-        not in the calibration table also fall back to the static
-        default (this is fine for DeltaNet layers which don't write FP8 KV
-        anyway).
-        """
-        import os, json
-        env_path = os.environ.get("KV_SCALES_PATH")
-        candidates = [p for p in [
-            env_path,
-            "/work/qwen35/kv_scales.json",
-            "/data/kv_scales.json",
-            os.path.join(os.path.dirname(__file__), "kv_scales.json"),
-        ] if p]
-        for p in candidates:
-            try:
-                with open(p) as f:
-                    data = json.load(f)
-                layers = data.get("layers", {})
-                entry = layers.get(str(layer_idx))
-                if entry is not None:
-                    k = float(entry["k_scale"])
-                    v = float(entry["v_scale"])
-                    return k, v
-            except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
-                continue
-        return 8.0, 8.0  # static fallback
 
     def _setup_weight_loaders(self) -> None:
         if self.attn_output_gate:
@@ -957,52 +916,6 @@ class Qwen3_5DeltaNetAttention(nn.Module):
         # The DeltaNet `LayerSpec` (in `get_kv_cache_spec()`) sizes the
         # cache so block 0 of `k_cache` exactly fits one recurrent state
         # and `v_cache` block 0 holds the conv state.
-        # State buffers for DeltaNet recurrent + conv state.
-        # CRITICAL: initialize with NON-ZERO epsilon (1e-30) instead of
-        # zeros. The Neuron compiler constant-folds zero-init buffers,
-        # which makes `.data.copy_(...)` writes during forward INVISIBLE
-        # to subsequent forward calls — DeltaNet would read zero state
-        # forever and produce a degenerate 3-token decode loop.
-        #
-        # 1e-30 in fp32 rounds to exactly zero in bf16, so it doesn't
-        # change the math. But the float32 storage is non-zero,
-        # preventing the compiler from treating the buffer as a
-        # constant. Reads now properly route through the runtime's
-        # buffer storage, and `.copy_()` writes persist across calls.
-        nc = config.neuron_config
-        if nc is None:
-            max_batch = 1
-        elif hasattr(nc, "max_batch_size") and nc.max_batch_size is not None:
-            max_batch = int(nc.max_batch_size)
-        elif hasattr(nc, "num_seqs_buckets") and nc.num_seqs_buckets:
-            max_batch = int(max(nc.num_seqs_buckets))
-        else:
-            max_batch = int(getattr(nc, "max_batch_size", 1) or 1)
-
-        # Use float32 for the buffer storage (the recurrent math runs in
-        # fp32 anyway). Initialize with tiny epsilon to break constant-
-        # folding.
-        eps = 1e-30
-        self.register_buffer(
-            "recurrent_state_buffer",
-            torch.full(
-                (max_batch, self.num_v_heads, self.head_k_dim, self.head_v_dim),
-                eps,
-                dtype=torch.float32,
-                device="cpu",
-            ),
-            persistent=False,
-        )
-        self.register_buffer(
-            "conv_state_buffer",
-            torch.full(
-                (max_batch, self.conv_dim, self.conv_kernel_size - 1),
-                eps,
-                dtype=self.dtype,
-                device="cpu",
-            ),
-            persistent=False,
-        )
 
         # Pre-built per-layer DeltaNet masks. Stored as buffers so they
         # move with the module to the Neuron device, and so Dynamo can
@@ -1220,7 +1133,8 @@ class Qwen3_5DeltaNetAttention(nn.Module):
         # respectively (vllm-tracked, persists across forward calls).
         final_state = torch.stack(states, dim=0)
         final_state = final_state.reshape(batch_size, self.num_v_heads, self.head_k_dim, self.head_v_dim)
-        self._write_recurrent_state(final_state, batch_size)
+        rec_state_size = self.num_v_heads * self.head_k_dim * self.head_v_dim
+        self._write_recurrent_state_to_cache(final_state, batch_size, rec_state_size)
 
         # Stash conv state from last (kernel-1) pre-conv mixed tokens.
         if seq_len >= self.conv_kernel_size - 1:
@@ -1230,7 +1144,7 @@ class Qwen3_5DeltaNetAttention(nn.Module):
                 mixed, (self.conv_kernel_size - 1 - seq_len, 0)
             )[:, :, -(self.conv_kernel_size - 1):]
         conv_state_size = self.conv_dim * (self.conv_kernel_size - 1)
-        self._write_conv_state(new_conv_state, batch_size)
+        self._write_conv_state_to_cache(new_conv_state, batch_size, conv_state_size)
 
         # 14. RMSNorm over head_v_dim, then z gate (silu), then out_proj
         # output: [B, S, value_dim] -> [B, S, num_v_heads, head_v_dim]
@@ -1262,41 +1176,69 @@ class Qwen3_5DeltaNetAttention(nn.Module):
         decode_token_threshold = attn_metadata[layer_name]["decode_token_threshold"]
         return max_query_len > decode_token_threshold
 
-    # ── State helpers ───────────────────────────────────────────────────
+    # ── State-in-KV-cache helpers ────────────────────────────────────────
     #
-    # State lives in `recurrent_state_buffer` and `conv_state_buffer`,
-    # which are nn.Buffers initialized with NON-ZERO epsilon (1e-30) to
-    # prevent the Neuron compiler from constant-folding them. Mutations
-    # via `.copy_()` persist between forward calls because the compiler
-    # treats them as varying graph inputs.
+    # Approach: treat self.k_cache and self.v_cache as flat 1D byte
+    # buffers and write/read at fixed offsets. The cache shape determined
+    # by LayerSpec just needs to have num_blocks * num_kv_heads *
+    # block_size * head_size >= state_size; we don't care about the
+    # individual dimensions because we use flat indexing.
 
-    def _write_recurrent_state(self, new_state: torch.Tensor, batch_size: int) -> None:
-        """Persist recurrent state into the buffer.
+    def _write_recurrent_state_to_cache(
+        self, new_state: torch.Tensor, batch_size: int, rec_state_size: int
+    ) -> None:
+        """Write recurrent state into self.k_cache (flat layout).
 
-        new_state: [B, num_v_heads, head_k_dim, head_v_dim]
+        new_state shape: [batch_size, num_v_heads, head_k_dim, head_v_dim]
+        Flatten to [batch_size * rec_state_size] and write to k_cache's
+        flat view at indices [0..N-1].
         """
-        self.recurrent_state_buffer[:batch_size].copy_(new_state.float())
+        new_flat = new_state.to(self.k_cache.dtype).reshape(-1).contiguous()
+        N = new_flat.shape[0]
+        cache_flat = self.k_cache.reshape(-1)
+        idx = torch.arange(N, dtype=torch.long, device=new_flat.device)
+        cache_flat.index_put_((idx,), new_flat)
 
-    def _read_recurrent_state(self, batch_size: int) -> torch.Tensor:
-        """Read recurrent state.
+    def _read_recurrent_state_from_cache(self, batch_size: int) -> torch.Tensor:
+        """Read recurrent state from self.k_cache.
 
-        Returns [B, num_v_heads, head_k_dim, head_v_dim] in fp32.
+        Returns shape [batch_size, num_v_heads, head_k_dim, head_v_dim]
+        in float32 (the recurrent math runs in fp32).
         """
-        return self.recurrent_state_buffer[:batch_size]
+        rec_state_size = self.num_v_heads * self.head_k_dim * self.head_v_dim
+        N = batch_size * rec_state_size
+        cache_flat = self.k_cache.reshape(-1)
+        flat = cache_flat[:N]
+        return flat.reshape(
+            batch_size, self.num_v_heads, self.head_k_dim, self.head_v_dim
+        ).to(self.dtype).float()
 
-    def _write_conv_state(self, new_conv_state: torch.Tensor, batch_size: int) -> None:
-        """Persist conv1d state into the buffer.
+    def _write_conv_state_to_cache(
+        self, new_conv_state: torch.Tensor, batch_size: int, conv_state_size: int
+    ) -> None:
+        """Write conv1d state into self.v_cache (flat layout).
 
-        new_conv_state: [B, conv_dim, kernel-1]
+        new_conv_state shape: [batch_size, conv_dim, kernel-1]
         """
-        self.conv_state_buffer[:batch_size].copy_(new_conv_state.to(self.dtype))
+        new_flat = new_conv_state.to(self.v_cache.dtype).reshape(-1).contiguous()
+        N = new_flat.shape[0]
+        cache_flat = self.v_cache.reshape(-1)
+        idx = torch.arange(N, dtype=torch.long, device=new_flat.device)
+        cache_flat.index_put_((idx,), new_flat)
 
-    def _read_conv_state(self, batch_size: int) -> torch.Tensor:
-        """Read conv1d state.
+    def _read_conv_state_from_cache(
+        self, batch_size: int, conv_state_size: int
+    ) -> torch.Tensor:
+        """Read conv1d state from self.v_cache.
 
-        Returns [B, conv_dim, kernel-1].
+        Returns shape [batch_size, conv_dim, kernel-1].
         """
-        return self.conv_state_buffer[:batch_size]
+        N = batch_size * conv_state_size
+        cache_flat = self.v_cache.reshape(-1)
+        flat = cache_flat[:N]
+        return flat.reshape(
+            batch_size, self.conv_dim, self.conv_kernel_size - 1
+        ).to(self.dtype)
     # ── Decode (TKG) ─────────────────────────────────────────────────────
 
     def _forward_decode(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -1352,8 +1294,8 @@ class Qwen3_5DeltaNetAttention(nn.Module):
         mixed_now = mixed_now.transpose(1, 2)                  # [B, conv_dim, 1]
 
         conv_state_size = self.conv_dim * (self.conv_kernel_size - 1)
-        # Read prior conv state from buffer.
-        conv_state = self._read_conv_state(batch_size)
+        # Read prior conv state from v_cache via helper (uses cache slot 0..B-1).
+        conv_state = self._read_conv_state_from_cache(batch_size, conv_state_size)
         conv_input = torch.cat([conv_state, mixed_now], dim=-1)  # [B, conv_dim, 4]
 
         # Depthwise: weight [conv_dim, 1, 4] → [conv_dim, 4]
@@ -1367,8 +1309,8 @@ class Qwen3_5DeltaNetAttention(nn.Module):
 
         # New conv state: shift left, append latest pre-conv mixed
         new_conv_state = torch.cat([conv_state[:, :, 1:], mixed_now], dim=-1)
-        # Write back to buffer (persists across calls thanks to non-zero init).
-        self._write_conv_state(new_conv_state, batch_size)
+        # Write back through v_cache via index_put_ (persists across calls).
+        self._write_conv_state_to_cache(new_conv_state, batch_size, conv_state_size)
 
         # Split q/k/v
         q = mixed_post_conv[..., : self.key_dim]
@@ -1418,7 +1360,7 @@ class Qwen3_5DeltaNetAttention(nn.Module):
         # [num_blocks, num_v_heads=32, block_size=128, head_k_dim=128].
         # Block b stores batch b's state directly (no flat-pack).
         rec_state_size = self.num_v_heads * self.head_k_dim * self.head_v_dim
-        recurrent_state = self._read_recurrent_state(batch_size)
+        recurrent_state = self._read_recurrent_state_from_cache(batch_size)
         # Shape: [B, num_v_heads, head_k_dim, head_v_dim]
 
         # 9. Single-step recurrent update (PR #152 _recurrent_step)
@@ -1441,8 +1383,8 @@ class Qwen3_5DeltaNetAttention(nn.Module):
         # Add a singleton seq dim → [B, H, 1, head_v_dim]
         out_h = out_one.unsqueeze(2)
 
-        # 10. Write back state to buffer (persists across calls).
-        self._write_recurrent_state(new_state, batch_size)
+        # 10. Write back state to k_cache via index_put_
+        self._write_recurrent_state_to_cache(new_state, batch_size, rec_state_size)
 
         # 11. Reshape and finish: RMSNorm, z gate, out_proj
         # out_h: [B, H, 1, head_v_dim] → [B, 1, H, head_v_dim]
@@ -1856,15 +1798,49 @@ class Qwen3_5ForConditionalGeneration(nn.Module):
                     )
                 )
             else:
-                # DeltaNet: dummy KV with 1 head, head_size=1 — DeltaNet
-                # state lives in `attn._rec_state` and `attn._conv_state`
-                # nn.Buffers (non-zero epsilon init prevents constant-
-                # folding so mutations DO persist between forward calls).
+                # DeltaNet: store recurrent_state in K cache, conv_state
+                # in V cache. Sized so block 0 of the cache holds at
+                # least one recurrent_state's worth of floats.
+                # vllm-neuron's block_size is typically 16 (not the
+                # large 128 that GQA layers use), so we set head_size
+                # large enough that num_kv_heads * block_size * head_size
+                # >= recurrent_state_size = num_v_heads * head_k_dim *
+                # head_v_dim.
+                # Conservative pick: num_kv_heads=num_v_heads (32),
+                # head_size=head_k_dim * head_v_dim / block_size (1024
+                # for block_size=16). That's 32 * 16 * 1024 = 524288
+                # which exactly fits one recurrent_state.
+                # We use vllm-neuron's tracked kv_cache infrastructure
+                # (which persists state across forward calls) instead of
+                # a side-channel `nn.Buffer` (which on Neuron is constant-
+                # folded to its initial zeros, so `.data.copy_()` writes
+                # don't propagate between calls).
+                rec_state_size = (
+                    attn.num_v_heads * attn.head_k_dim * attn.head_v_dim
+                )
+                # Heuristic block_size from vllm-neuron is 16. Choose
+                # num_kv_heads=32 (matches num_v_heads for clean reshape)
+                # and head_size that fills out the rest.
+                target_num_kv_heads = attn.num_v_heads
+                # block_size will be set by vllm runtime (default 16 in
+                # vllm-neuron). We compute head_size symbolically here
+                # by assuming the smallest reasonable block_size that
+                # vllm-neuron uses for our cache. The actual block_size
+                # is read at runtime via attn_metadata, but for the spec
+                # we need a size that MATCHES at allocation time.
+                #
+                # Take a conservative approach: use a head_size that
+                # gives us at least 32K elements per slot, and we'll
+                # allocate enough blocks for our state.
+                target_head_size = max(
+                    1024,
+                    rec_state_size // (target_num_kv_heads * 16),
+                )
                 layers.append(
                     LayerSpec(
                         name=layer_name,
-                        num_kv_heads=1,
-                        head_size=1,
+                        num_kv_heads=target_num_kv_heads,
+                        head_size=target_head_size,
                         dtype=self.config.torch_dtype,
                         sliding_window_size=None,
                         chunk_size=None,
