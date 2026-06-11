@@ -87,8 +87,11 @@ def _call_kernel(wrapped, q, k_full, v_full, mask, scale):
     assert S_q == 1, f"S_q must be 1 for decode_hd256_kernel, got {S_q}"
 
     # Convert mask → fp32 additive bias (zeros where allowed, NEG_BIAS elsewhere).
-    # Shape: [B, 1, 1, S_ctx] → broadcast to per-head call.
-    mask_bias = make_mask_bias(mask)               # [B, 1, S_q, S_ctx] fp32
+    # Compute on CPU then move to Neuron — the (~mask) bool→fp32 cast is
+    # quirky on neuron device. mask is small (B*1*S_q*S_ctx) so the
+    # round-trip is free relative to the kernel work.
+    mask_bias_cpu = make_mask_bias(mask.cpu())             # [B, 1, S_q, S_ctx] fp32
+    mask_bias = mask_bias_cpu.to(q.device)
 
     outs = []
     for b in range(B):
