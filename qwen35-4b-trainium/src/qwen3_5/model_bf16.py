@@ -329,39 +329,80 @@ class Qwen3_5GQAAttention(nn.Module):
         self.k_cache = None
         self.v_cache = None
 
-        # Path D: FP8 KV cache scales. Registered as buffers (not Parameters)
-        # because the safetensors checkpoint doesn't ship `k_scale`/`v_scale`
-        # keys — registering as Parameters trips strict weight loading.
+        # Path D: FP8 KV cache scales. Per-layer calibrated, loaded from
+        # kv_scales.json (produced by tools/calibrate_kv_scales.py).
         #
-        # Default scale = 8.0 (empirical sweet spot between scale=1 and scale=32).
+        # Calibration history & rationale:
+        #   scale=32 (uniform) → 4/6 correct, "useruser..." drift
+        #     (over-saturation: clamps |x|>7.5, max_abs varies 7-52 across layers)
+        #   scale=1.0 (uniform) → 5/6 correct, drift after token 2
+        #     (under-utilization: only ~3 mantissa bits in normalized range)
+        #   scale=8.0 (uniform) → 4/6 correct, less drift but still wrong
+        #     (still wrong for layers needing scale 4 or scale 28)
+        #   scale=PER-LAYER (this) → real win:
+        #     each GQA layer gets `k_scale = 240*0.9/max_abs_K` from
+        #     calibration sample. Range: 4.15 to 28.68 across the 8
+        #     GQA layers in Qwen3.5-4B (every-4th-layer pattern).
         #
-        # Iteration history (Qwen3.5-4B, MAX_LEN=2048 BUCKET=2048 max_seqs=8):
-        #   scale=32 → 4/6 first-token correctness, drift to "useruser..."
-        #              (over-saturation: clamps any |x|>7.5, kills outlier heads)
-        #   scale=1.0 → 5/6 first-token correctness, drift to "user..." after
-        #              tokens 2-3 (under-utilization: only ~3 mantissa bits in
-        #              the [-1, 1] range typical of normalized K/V values).
-        #   scale=8.0 → maps typical [-1, 1] K/V into [-8, 8], using ~5 bits
-        #              of FP8 precision; only |x|>30 saturates (rare on
-        #              Qwen3.5-4B's K/V distributions). This balances
-        #              precision vs. saturation for static-scale FP8 KV.
-        # TODO: per-layer calibrated scales loaded from a kv_scales.json
-        # produced by an offline CPU calibration pass. Static scale is a
-        # compromise.
+        # Buffers are registered (not Parameters) because the original
+        # safetensors checkpoint doesn't ship `k_scale`/`v_scale` keys.
+        # Registering as Parameters would trip strict weight loading.
+        # If kv_scales.json is missing or doesn't have an entry for this
+        # layer, fall back to the empirical static scale (8.0) — which
+        # is what's used for DeltaNet layers (which never write FP8 KV).
+        k_scale_init, v_scale_init = self._load_calibrated_kv_scales(layer_idx)
         self.register_buffer(
             "k_scale",
-            torch.tensor(8.0, dtype=torch.float32, device="cpu"),
+            torch.tensor(k_scale_init, dtype=torch.float32, device="cpu"),
             persistent=False,
         )
         self.register_buffer(
             "v_scale",
-            torch.tensor(8.0, dtype=torch.float32, device="cpu"),
+            torch.tensor(v_scale_init, dtype=torch.float32, device="cpu"),
             persistent=False,
         )
-        self.k_scale_float = 8.0
-        self.v_scale_float = 8.0
+        self.k_scale_float = float(k_scale_init)
+        self.v_scale_float = float(v_scale_init)
 
         self._setup_weight_loaders()
+
+    @staticmethod
+    def _load_calibrated_kv_scales(layer_idx: int) -> tuple[float, float]:
+        """Load per-layer FP8 KV scales from kv_scales.json.
+
+        Search order (first found wins):
+          1. ${KV_SCALES_PATH} env var
+          2. /work/qwen35/kv_scales.json
+          3. /data/kv_scales.json
+          4. <package_dir>/kv_scales.json
+          5. Fallback: (8.0, 8.0) static — same as the prior empirical default
+
+        Returns (k_scale, v_scale) for this specific layer_idx. Layers
+        not in the calibration table also fall back to the static
+        default (this is fine for DeltaNet layers which don't write FP8 KV
+        anyway).
+        """
+        import os, json
+        env_path = os.environ.get("KV_SCALES_PATH")
+        candidates = [p for p in [
+            env_path,
+            "/work/qwen35/kv_scales.json",
+            "/data/kv_scales.json",
+            os.path.join(os.path.dirname(__file__), "kv_scales.json"),
+        ] if p]
+        for p in candidates:
+            try:
+                with open(p) as f:
+                    data = json.load(f)
+                layers = data.get("layers", {})
+                entry = layers.get(str(layer_idx))
+                if entry is not None:
+                    k = float(entry["k_scale"])
+                    v = float(entry["v_scale"])
+                    return k, v
+            except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
+                continue
+        return 8.0, 8.0  # static fallback
 
     def _setup_weight_loaders(self) -> None:
         if self.attn_output_gate:
