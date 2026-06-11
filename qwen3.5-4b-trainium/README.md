@@ -16,38 +16,53 @@ This adapter builds on top of vllm-neuron Beta v5 and adds:
 - The `(1+weight)` RMSNorm convention used throughout the network.
 - A tile-based DeltaNet kernel (PR #152's NKI fused chunked forward)
   for prefill, and a recurrent-step decode path.
-- **State persistence for DeltaNet via non-zero-init nn.Buffer** —
+- **State persistence for DeltaNet via non-zero-init `nn.Buffer`** —
   see "The state-persistence fix" below.
 
 ## Status
 
-✅ **Validated correctness** at TP=4, MAX_LEN=512 on `trn2.48xlarge`
-(vllm-neuron Beta v5 container). Output is coherent and factually
+✅ **Correctness validated end-to-end** on `trn2.48xlarge` (TP=4) at
+three serving configurations: single-shot prefill at MAX_LEN=512 and
+MAX_LEN=4096, and chunked prefill at MAX_LEN=20480 with 4K chunks
+(the customer 20K-input pattern). Output is coherent and factually
 correct across varied prompts.
 
 | Test | Result |
 |------|--------|
-| "The capital of France is" → first 200 tok | structured `<think>` analysis acknowledging Paris |
+| "The capital of France is" → 200 tok | structured `<think>` analysis acknowledging Paris |
 | "Calculate 17 times 23" | "= 391", with two methods shown |
 | "1 to 30, one per line" | perfect 1→30, no drift |
-| "Why is the sky blue?" (480 tok) | accurate Rayleigh-scattering essay with the `1/λ⁴` formula and correct wavelengths |
-| "Largest country / planet / ..." | correct: Russia, Jupiter, etc. |
+| "Why is the sky blue?" (480 tok) | accurate Rayleigh-scattering essay with `1/λ⁴` formula and correct wavelengths |
+| "Largest country / planet / ..." | correct (Russia, Jupiter, etc.) |
+| 20K-token AI history → summarize | coherent numbered milestone list, factually accurate |
 
-### Baseline performance (TP=4, MAX_LEN=512, single-shot prefill, decode batch=1)
+## Performance — verified on trn2.48xlarge, TP=4, BF16 KV
 
-| Input tokens | TTFT (s) | Decode tok/s |
-|---:|---:|---:|
-| 100 | 1.83 | 18.4 |
-| 200 | 1.83 | 18.4 |
-| 300 | 1.83 | 18.4 |
+Three serving configs, end-to-end timings, single greedy request:
 
-TTFT is flat across input lengths up to ~500 tokens — vllm-neuron's
-chunked-prefill scheduler has a fixed floor cost for the prefill NEFF.
-Decode throughput is independent of input length at this scale.
+| Mode | MAX_LEN | BUCKET | TTFT (s) | Decode tok/s | Use case |
+|---|---:|---:|---:|---:|---|
+| Short single-shot | 512 | 512 | **1.83** (≤300 tok in) | 18.4 | small prompts (<500 tok) |
+| Medium single-shot | 4096 | 4096 | **8.61** (200-4000 tok in) | 18.35 | 1-4K prompts |
+| Long chunked | 20480 | 4096 (×5) | **43.04** (20K input) | 18.08 | 20K customer pattern |
 
-Numbers for MAX_LEN=4096 (single-shot 4k prefill) and the customer
-20k-input shape (chunked prefill at 4k) are pending — recompile
-takes ~30 min and benchmarks will be added in a follow-up commit.
+Cost at trn2.48xl on-demand ($21.50/hr):
+
+| Workload | $/M input | $/M output |
+|---|---:|---:|
+| 20K input, 200 output | $12.85 | $330 |
+| 200 input, 32 output | $1.85 | $325 |
+
+Full benchmark with sample completions, reproduction steps, and the
+break-down of where time goes:
+[BENCHMARK_TRN2_48XL.md](./BENCHMARK_TRN2_48XL.md).
+
+A separate trn2.3xl benchmark is in
+[BENCHMARK_TRN2_3XL.md](./BENCHMARK_TRN2_3XL.md) — note that the
+earlier `$1.63/M-input` 3xl number reported elsewhere was measured
+on a broken model (DeltaNet state was being constant-folded — see
+"The state-persistence fix" below) and is not honest. Post-fix 3xl
+numbers are in that doc.
 
 ## Quickstart
 
@@ -65,10 +80,25 @@ TP=4 MAX_LEN=4096 PORT=8000 \
   MODEL=/path/to/Qwen3.5-4B \
   ./src/serve.sh
 
-# Long context (chunked prefill on 4K chunks — customer shape)
-TP=4 MAX_LEN=32768 BUCKET=4096 \
+# Long context — customer 20K input shape (chunked prefill, 5 × 4K chunks)
+TP=4 MAX_LEN=20480 BUCKET=4096 \
   MODEL=/path/to/Qwen3.5-4B \
   ./src/serve.sh
+```
+
+First compile takes ~25-40 min on a 48xl (`walrus_driver` is
+host-CPU-bound). Subsequent runs hit the NEFF cache. The
+`MAX_LEN=20480` config is fast to recompile because the 4K prefill
+graph is shared with `MAX_LEN=4096` and only the decode graph
+changes.
+
+To reproduce the benchmark numbers in
+[BENCHMARK_TRN2_48XL.md](./BENCHMARK_TRN2_48XL.md):
+
+```bash
+# Inside the container after serve is up:
+python3 bench_qwen35_sweep.py --input-lengths 200,500,1000,2000,4000 --max-new 64
+python3 bench_qwen35_long.py  --input-tokens 20000 --max-new 200
 ```
 
 ## The state-persistence fix
@@ -136,6 +166,10 @@ to over 90 minutes per HLO graph. The epsilon-init Buffer approach
 is functionally equivalent, has no graph-size impact, and compiles
 in normal time.
 
+The same fix has been pushed to the upstream
+[private-vllm-neuron PR #2104](https://github.com/aws-neuron/private-vllm-neuron/pull/2104)
+on commit `8d7e2109`.
+
 ## Layout
 
 ```
@@ -156,6 +190,11 @@ test/
   test_phase1_skeleton.py    # config + factory smoke
   test_paris_smoke.py        # weight-mapping + register smoke
   test_logits_parity.py      # CPU prefill parity vs HF
+
+bench_qwen35_sweep.py        # short/medium-context throughput sweep
+bench_qwen35_long.py         # customer 20K × 200 long-context bench
+BENCHMARK_TRN2_48XL.md       # full 48xl benchmark with reproduction
+BENCHMARK_TRN2_3XL.md        # 3xl benchmark + 3xl-vs-48xl tradeoffs
 ```
 
 ## Required container patches (Beta v5)
@@ -182,10 +221,9 @@ sudo docker exec vllm_neuron find /opt/conda/lib/python3.12/site-packages/torch/
 
 ## Other things worth knowing
 
-- The `(1+weight)` RMSNorm bug (Gemma-style) is fixed throughout;
-  weights are zero-centered on disk and `output * (1 + weight)` is
-  applied at runtime. This was the bug that caused the 4B's first-token
-  output to look like garbage in the parent code.
+- The `(1+weight)` RMSNorm convention (Gemma-style) is fixed
+  throughout; weights are zero-centered on disk and `output * (1 + weight)`
+  is applied at runtime.
 - `attn_output_gate=True` is honored. The gate weight is spliced into
   `q_proj`'s second half on disk (per-head `[h_q | h_gate]` interleaving);
   custom loaders (`_spliced_q_kv_loader`, `_spliced_q_gate_loader`) split
@@ -197,17 +235,30 @@ sudo docker exec vllm_neuron find /opt/conda/lib/python3.12/site-packages/torch/
 - The mask uses bf16 min (`-65504`) on causal-violating positions and
   softmax runs in fp32 — matches NxDI's reference for QK-mask leakage
   control.
+- **NEFFs are portable across Trainium instance types**: a NEFF
+  compiled on a 48xl runs identically on a 3xl as long as the runtime
+  is the same vllm-neuron Beta v5 image. Customers shipping a fixed
+  configuration can compile once on a 48xl (faster compile box) and
+  serve from a 3xl ($2.23/hr vs $21.50/hr).
 
-## Next steps / not yet done
+## Roadmap (not yet done)
 
-- Path D-style FP8 KV cache. Plumbed but not yet enabled by default.
-- Fused decode attention NKI kernel for head_dim=256 (replace the
-  current Python split-K matmul in `Qwen3_5GQAAttention.forward_decode`).
-- Fused DeltaNet recurrent-step NKI kernel (replace the current
-  ~10 elementwise ops per token).
-- TP=8 sweep (currently TP=4 is what we benchmark).
-- Speculative decode via the `mtp.*` head (currently skipped during
-  weight loading; the head is in the checkpoint).
+The decode throughput (~18 tok/s) is the bottleneck for the customer's
+20K-input shape. Two NKI optimizations expected to land 2-4× on this:
+
+1. **Fused decode-attention NKI kernel for `head_dim=256`** — replaces
+   the current Python split-K matmul in `Qwen3_5GQAAttention.forward_decode`
+   (stock `NF.attention_decode` rejects head_dim>128). Expected
+   1.3-2× decode on the 8 GQA layers.
+2. **Fused DeltaNet recurrent-step NKI kernel** — replaces ~10
+   elementwise ops per token across the 24 GDN layers. Expected
+   1.5-2× on those layers.
+3. **FP8 KV cache** (Path D, half-built in
+   `customers/Scaledown/pathD/`) — 2× memory budget → bigger batch →
+   linear $/M improvement.
+4. **TP=8 sweep** (currently TP=4 is what we benchmark).
+5. **Speculative decode via the `mtp.*` head** (currently skipped
+   during weight loading; the head is in the checkpoint).
 
 ## License
 
