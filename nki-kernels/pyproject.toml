@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "armin_nki_kernels"
+version = "0.0.1"
+description = "Hand-written NKI kernels for Qwen3.5/3.6 hybrid models on Trainium2"
+authors = [{ name = "Armin Aghaeb" }]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # NKI is provided by the vllm-neuron container; we don't pin it.
+    # torch is also provided by the container.
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "numpy"]
+bench = ["numpy"]
+
+[tool.setuptools.packages.find]
+include = ["armin_nki_kernels*"]
