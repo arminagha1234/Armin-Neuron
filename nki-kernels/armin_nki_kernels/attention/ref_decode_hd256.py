@@ -95,6 +95,21 @@ def decode_hd256_ref(
     return out
 
 
+def make_mask_bias(
+    mask: torch.Tensor,         # [B, 1, S_q, S_ctx] bool
+) -> torch.Tensor:
+    """Convert a bool mask to the additive fp32 bias used by the kernel.
+
+    Returns a tensor of shape [B, 1, S_q, S_ctx] in fp32 where:
+        bias = 0.0          where mask is True (allowed)
+        bias = NEG_BIAS     where mask is False (masked)
+
+    The kernel takes mask_bias instead of bool mask because NKI bool
+    handling is awkward, and converting once outside the kernel is cheap.
+    """
+    return (~mask).to(torch.float32) * NEG_BIAS
+
+
 def make_test_inputs(
     B: int = 1,
     Nh: int = 16,

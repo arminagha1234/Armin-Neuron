@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import torch
 
-from .ref_decode_hd256 import decode_hd256_ref
+from .ref_decode_hd256 import decode_hd256_ref, make_mask_bias
 
 
-# Lazy / optional imports — keep adapter import-time cheap.
 _wrapped_kernel = None
 
 
@@ -41,7 +40,6 @@ def _try_get_wrapped_kernel():
         _wrapped_kernel = wrap_nki(decode_hd256_kernel)
         return _wrapped_kernel
     except Exception:
-        # If wrap_nki fails (e.g. on a CPU-only dev host), fall back.
         return None
 
 
@@ -64,32 +62,47 @@ def decode_hd256(
     """Fused decode attention for head_dim=256.
 
     See ref_decode_hd256.decode_hd256_ref for the math contract.
-
-    Routes to the NKI kernel when running on Neuron (with a usable
-    vllm-neuron `wrap_nki`), otherwise falls back to the PyTorch
-    reference.
     """
     if _can_run_on_neuron(q):
         wrapped = _try_get_wrapped_kernel()
         if wrapped is not None:
-            # Iterate (B, Nh) outside the kernel — kernel handles one
-            # (S_q, head_dim) at a time, similar to how the PR #152
-            # DeltaNet wrapper iterates over (B, H_v).
-            B, Nh = q.shape[0], q.shape[1]
-            outs = []
-            for b in range(B):
-                row = []
-                for h in range(Nh):
-                    out_bh = wrapped[2](
-                        q=q[b, h].contiguous(),
-                        k_full=k_full[b, h].contiguous(),
-                        v_full=v_full[b, h].contiguous(),
-                        mask=mask[b, 0].contiguous(),
-                        scale=scale,
-                    )
-                    row.append(out_bh)
-                outs.append(torch.stack(row, dim=0))
-            return torch.stack(outs, dim=0)
+            return _call_kernel(wrapped, q, k_full, v_full, mask, scale)
 
-    # CPU / fallback / pre-kernel-implementation path.
+    # CPU / fallback path.
     return decode_hd256_ref(q, k_full, v_full, mask, scale)
+
+
+def _call_kernel(wrapped, q, k_full, v_full, mask, scale):
+    """Iterate (B, Nh) and call the per-(b, h) kernel.
+
+    Kernel signature (per call):
+        q_bh         : (1, 256) bf16
+        k_full_bh    : (S_ctx, 256) bf16
+        v_full_bh    : (S_ctx, 256) bf16
+        mask_bias_bh : (1, S_ctx) fp32   — pre-computed (~mask) * NEG_BIAS
+        scale        : float
+        → out_bh     : (1, 256) bf16
+    """
+    B, Nh, S_q, Dh = q.shape
+    assert S_q == 1, f"S_q must be 1 for decode_hd256_kernel, got {S_q}"
+
+    # Convert mask → fp32 additive bias (zeros where allowed, NEG_BIAS elsewhere).
+    # Shape: [B, 1, 1, S_ctx] → broadcast to per-head call.
+    mask_bias = make_mask_bias(mask)               # [B, 1, S_q, S_ctx] fp32
+
+    outs = []
+    for b in range(B):
+        row = []
+        mb_b = mask_bias[b, 0]                    # [S_q, S_ctx]
+        for h in range(Nh):
+            out_bh = wrapped[2](
+                q=q[b, h].contiguous(),           # [1, 256]
+                k_full=k_full[b, h].contiguous(), # [S_ctx, 256]
+                v_full=v_full[b, h].contiguous(), # [S_ctx, 256]
+                mask_bias=mb_b.contiguous(),      # [1, S_ctx]
+                scale=scale,
+            )
+            row.append(out_bh)
+        outs.append(torch.stack(row, dim=0))
+    out = torch.stack(outs, dim=0)                 # [B, Nh, 1, 256]
+    return out
