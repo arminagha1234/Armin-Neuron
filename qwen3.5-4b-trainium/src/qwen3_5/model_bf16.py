@@ -673,69 +673,91 @@ class Qwen3_5GQAAttention(nn.Module):
         # matmul is ~0.4 GFLOP/layer — small, not the bottleneck.
 
         # 7) Path E: Gemma4-style split-K + split-V flash attention for head_dim=256.
-        # Replaces Path D's full-Q-times-full-K matmul (which forces the
-        # Neuron compiler down a slower path because of the 256 reduction
-        # dim) with two head_dim=128 matmuls accumulated via PSUM.
+        # Two backends:
         #
-        # Reference: ../../../../Gemma4/flash_attn_hd256_nki.py — pure
-        # PyTorch split-K kernel, designed to be lowered to NKI by
-        # torch.compile. Same math as the original Path D forward_decode
-        # but in a layout the Neuron compiler can fuse aggressively.
+        #   Path E1 (default, "eager"): Pure-PyTorch split-K + split-V matmul
+        #     pair. Lowered by the Neuron compiler into PSUM-accumulating
+        #     nc_matmul calls. Robust, well-validated.
         #
-        # Math:
+        #   Path E2 (opt-in, NKI): Hand-rolled fused kernel that does the same
+        #     split-K decomposition internally with PSUM accumulation, plus
+        #     fuses QK + softmax + AV into one NEFF (no intermediate
+        #     materialization). Toggled with QWEN35_NKI_DECODE=1.
+        #
+        # Both backends compute the SAME math:
         #   scores = (Q_lo @ K_lo^T + Q_hi @ K_hi^T) * scale
-        #   weights = softmax(scores + mask_bias)
-        #   out_lo = weights @ V_lo
-        #   out_hi = weights @ V_hi
-        #   out    = cat([out_lo, out_hi], dim=-1)
+        #   weights = softmax(scores + mask_bias, dtype=fp32) → bf16
+        #   out    = cat([weights @ V_lo, weights @ V_hi], dim=-1)
         #
-        # The compiler fuses the two QK matmuls into PSUM-accumulating
-        # nc_matmul calls (head_dim=128 fits the tensor engine transpose
-        # limit). Same trick for AV. Result: a single fused NEFF that
-        # parallelizes across requests cleanly, bypassing chunked-prefill.
+        # Parity validated via nki.simulate to cosine > 0.99998 across
+        # ctx=[128, 512, 2048, 4096]. See `nki_kernels/decode_hd256.py`
+        # and the standalone repo at github.com/arminagha1234/Armin-Neuron
+        # under `nki-kernels/`.
 
         # 7a) Reshape Q from [Nh, B*S_decode, Dh] -> [B, Nh, S_decode, Dh]
         q_b = q.transpose(0, 1).reshape(B, S_decode, Nh, Dh).transpose(1, 2)
 
-        # 7b) Per-request causal mask using positions (original approach).
+        # 7b) Per-request causal mask using positions.
         positions_b = positions.view(B, S_decode)              # [B, S_decode]
         k_idx = torch.arange(S_ctx, device=positions.device)   # [S_ctx]
         mask = (k_idx[None, None, None, :] <= positions_b[:, None, :, None])
 
-        # 7c) Split-K matmul: head_dim=256 → two head_dim=128 matmuls.
-        # Q_lo @ K_lo^T  +  Q_hi @ K_hi^T  =  Q @ K^T   (mathematically identical)
-        # Each individual matmul has K=128 which fits the tensor engine's
-        # 128 transpose limit cleanly.
         Dh_half = Dh // 2  # = 128 for head_dim=256
-        q_lo = q_b[..., :Dh_half]                 # [B, Nh, S_decode, 128]
-        q_hi = q_b[..., Dh_half:]                 # [B, Nh, S_decode, 128]
-        k_lo = K_full[..., :Dh_half]              # [B, Nh, S_ctx, 128]
-        k_hi = K_full[..., Dh_half:]              # [B, Nh, S_ctx, 128]
 
-        scores = (
-            torch.matmul(q_lo, k_lo.transpose(-2, -1))
-            + torch.matmul(q_hi, k_hi.transpose(-2, -1))
-        )                                          # [B, Nh, S_decode, S_ctx]
-        scores = scores * effective_scale
+        import os as _os
+        _use_nki_decode = (
+            _os.environ.get("QWEN35_NKI_DECODE", "0") == "1"
+            and S_decode == 1
+            and Dh == 256
+            and S_ctx % 128 == 0
+        )
 
-        # Apply mask via additive bias.
-        # Use -65504 (bf16 min) — matches NxDI Qwen3.5/3.6 reference
-        # implementation. -1e4 leaks through softmax in bf16 with many
-        # masked slots; -65504 saturates the bf16 representation and
-        # softmax exp() underflows to 0.
-        neg_bias = (~mask).to(scores.dtype) * -65504.0
-        scores = scores + neg_bias
-        # Run softmax in fp32 for numerical stability with the wide
-        # mask range (matches NxDI's `F.softmax(..., dtype=torch.float32)`).
-        attn_weights = torch.softmax(scores.float(), dim=-1).to(scores.dtype)
+        if _use_nki_decode:
+            # Path E2: NKI fused kernel. One call per (b, h).
+            from .nki_kernels import call_decode_hd256
 
-        # 7d) Split-V matmul: weights @ V_lo  cat  weights @ V_hi
-        v_lo = V_full[..., :Dh_half]              # [B, Nh, S_ctx, 128]
-        v_hi = V_full[..., Dh_half:]              # [B, Nh, S_ctx, 128]
-        attn_output_lo = torch.matmul(attn_weights, v_lo)   # [B, Nh, S_decode, 128]
-        attn_output_hi = torch.matmul(attn_weights, v_hi)   # [B, Nh, S_decode, 128]
-        attn_output = torch.cat([attn_output_lo, attn_output_hi], dim=-1)
-        # attn_output: [B, Nh, S_decode, Dh]
+            mask_bias = (~mask).to(torch.float32) * -65504.0  # [B, 1, 1, S_ctx]
+            outs = []
+            for b in range(B):
+                row = []
+                mb_b = mask_bias[b, 0]                # [1, S_ctx]
+                for h in range(Nh):
+                    out_bh = call_decode_hd256(
+                        q=q_b[b, h].contiguous(),         # [1, 256]
+                        k_full=K_full[b, h].contiguous(), # [S_ctx, 256]
+                        v_full=V_full[b, h].contiguous(), # [S_ctx, 256]
+                        mask_bias=mb_b.contiguous(),      # [1, S_ctx]
+                        scale=float(effective_scale),
+                    )
+                    row.append(out_bh)
+                outs.append(torch.stack(row, dim=0))
+            attn_output = torch.stack(outs, dim=0)             # [B, Nh, 1, 256]
+        else:
+            # Path E1: eager split-K + split-V (default).
+            # Q_lo @ K_lo^T  +  Q_hi @ K_hi^T  =  Q @ K^T
+            q_lo = q_b[..., :Dh_half]                 # [B, Nh, S_decode, 128]
+            q_hi = q_b[..., Dh_half:]                 # [B, Nh, S_decode, 128]
+            k_lo = K_full[..., :Dh_half]              # [B, Nh, S_ctx, 128]
+            k_hi = K_full[..., Dh_half:]              # [B, Nh, S_ctx, 128]
+
+            scores = (
+                torch.matmul(q_lo, k_lo.transpose(-2, -1))
+                + torch.matmul(q_hi, k_hi.transpose(-2, -1))
+            )                                          # [B, Nh, S_decode, S_ctx]
+            scores = scores * effective_scale
+
+            # Apply mask via additive bias. -65504 (bf16 min) saturates so
+            # softmax exp() underflows to 0 for masked positions.
+            neg_bias = (~mask).to(scores.dtype) * -65504.0
+            scores = scores + neg_bias
+            attn_weights = torch.softmax(scores.float(), dim=-1).to(scores.dtype)
+
+            v_lo = V_full[..., :Dh_half]              # [B, Nh, S_ctx, 128]
+            v_hi = V_full[..., Dh_half:]              # [B, Nh, S_ctx, 128]
+            attn_output_lo = torch.matmul(attn_weights, v_lo)
+            attn_output_hi = torch.matmul(attn_weights, v_hi)
+            attn_output = torch.cat([attn_output_lo, attn_output_hi], dim=-1)
+            # attn_output: [B, Nh, S_decode, Dh]
 
         # PATH D: apply V dequant scale here (fused into the next o_proj
         # by the compiler). v_dequant_scale = 1.0 in BF16-KV mode (no-op);
