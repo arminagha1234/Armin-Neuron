@@ -1,130 +1,99 @@
-# LTX-2 19B on vLLM-Omni Trainium — current status
+# LTX-2 on vLLM-Omni — Progress Status
 
-**Date:** 2026-06-12
-**Container:** `vllm-omni-neuron Beta 1` — `concourse-release-1cb0647:pr-655cd...`
-**Box:** `i-02a51e30b3a33408d` (us-east-2, trn2.48xlarge), `3.150.135.217`
+**Branch:** `ltx2-omni-bringup`
+**Box:** `i-02a51e30b3a33408d` @ `3.150.135.217` (us-east-2 trn2.48xlarge)
+**Container:** `vllm_omni`
+**Image:** `concourse-release-1cb0647:pr-655cd3ee9b8d69818e52f37fbe1bb2a445bfbd60`
 
-## TL;DR
+## Where we are
 
-LTX-2 19B is **blocked by a vendor-side bug in vLLM-Omni Beta 1**, not
-by anything we wrote. The base `vllm_omni.diffusion.models.ltx2.LTX2Pipeline`
-in this image is incompatible with the `diffusers==0.38.0` it ships with:
+**12 of 13 issues cleared.** Stuck on a deep cross-attn shape bug in vllm-omni's LTX-2 transformer code.
 
+### The breakthrough (this session)
+
+Adopted Jim Burtoft's NxDI-port pattern (`neuron/external/pr-117-nxdi-diffusion-models/contrib/models/ltx2-video-audio/src/pipeline.py::NeuronTransformerWrapper`): wrap the DiT in an EAGER `nn.Module` that sits OUTSIDE the `torch.compile` boundary and does coord/contiguity prep before calling the inner compiled DiT.
+
+**This decisively unblocked the catch-22** that defeated the previous session:
+- coords-on-CPU (needed for pipeline's `.repeat()` at line 1090) ✓
+- coords-on-Neuron (needed inside compiled graph) ✓ — done eagerly in wrapper
+
+After this fix:
+- Weight loading: ✓ (re-prefix `transformer.inner.*` in `load_weights`)
+- All 4 TP workers initialize: ✓
+- Transformer compile starts: ✓
+- Encoder + connectors + RoPE + mask flow: ✓
+- Reaches the dummy-run forward pass through the LTX-2 DiT.
+
+### The new wall (issue 13)
+
+Crashes inside the FX trace of the cross-attn (text-to-video) on:
 ```
-LTX2TextConnectors.forward() got an unexpected keyword argument 'additive_mask'
-```
-
-The vllm-omni base calls `self.connectors(prompt_embeds, additive_attention_mask, additive_mask=True)`,
-but diffusers 0.38 has `LTX2TextConnectors.forward(hidden_states, attention_mask, padding_side, scale_factor)`.
-No `additive_mask` parameter exists. This is a vendor internal API
-mismatch that needs to be fixed in either vllm-omni-base or diffusers.
-
-## Where we got to
-
-| Stage | Status |
-|---|---|
-| Pull Beta 1 Omni image | ✅ |
-| Container `vllm_omni` running | ✅ |
-| HelloWorldPipeline + Wan22 dev mode | ✅ end-to-end |
-| Download `Lightricks/LTX-2` weights (~291 GB) | ✅ |
-| Write `NeuronLTX2Pipeline` subclass | ✅ |
-| Auto-register via `PIPELINE_REGISTRY` | ✅ |
-| Encoders + VAE load via `from_pretrained()` | ✅ |
-| Transformer weights load via framework iterable | ✅ |
-| `_get_gemma_prompt_embeds` override (CPU encoder) | ✅ |
-| Mask dtype fix (cast on CPU before move) | ✅ |
-| Stage initializes, all 4 TP workers ready | ✅ |
-| First forward call to base `LTX2Pipeline.forward()` | ❌ vendor bug above |
-
-## The exact failure
-
-```
-File ".../vllm_omni/diffusion/models/ltx2/pipeline_ltx2.py", line 947, in forward
-    connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.connectors(
-        prompt_embeds, additive_attention_mask, additive_mask=True
-    )
-TypeError: LTX2TextConnectors.forward() got an unexpected keyword argument 'additive_mask'
+Dynamo failed: scaled_dot_product_attention(...,
+  attn_mask=FakeTensor(size=(2, 256, 8, 128), bf16))
+'Attempting to broadcast a dimension of length 128 at -1!
+Mismatching argument at index 1 had torch.Size([2, 256, 8, 128]);
+but expected shape should be broadcastable to [2, 8, 256, 1024]'
 ```
 
-**Diffusers 0.38 LTX2TextConnectors signature** (the one installed in the image):
-```python
-forward(self, text_encoder_hidden_states, attention_mask, padding_side='left', scale_factor=8)
-```
+The mask shape `[2, 256, 8, 128]` is the QUERY pre-permute shape, not a mask. Walking the LTX2 attn processor on paper produces the right 4D mask `[2, 8, 1, 1024]` at every step. So the bug is somewhere subtle in the FX trace inside vllm-omni's LTX-2 path — possibly Dynamo aliasing the query into the mask slot, or a cross-attn code path that wasn't tested on Neuron.
 
-**vllm-omni-base expects:** an `additive_mask=True` kwarg that doesn't exist.
+This is **deeper than issues 1-11**: those were eager-mode pipeline glue. This is inside the compiled graph itself.
 
-## Three paths forward
+## The two paths forward
 
-### Path 1 — file the vendor bug (best outcome, slowest)
-Open issue with AWS Neuron team for vLLM-Omni:
-> "Beta 1 vllm_omni.diffusion.models.ltx2.LTX2Pipeline calls
-> LTX2TextConnectors with additive_mask=True kwarg that doesn't exist
-> in diffusers 0.38 (the version shipped in the same image)."
+### Path 1 — Stay on vllm-omni, surgery on `ltx2_transformer.py`
 
-Wait for fix in Beta 2/3.
+Patch the cross-attn processor in vllm-omni's `ltx2_transformer.py` to avoid the shape collision. We have the file in `.tmp/ltx2_transformer.py` to study. Could compare against diffusers' reference LTX2 attention to find the deviation.
 
-### Path 2 — override forward() to use diffusers' own LTX2Pipeline.__call__
-Skip vllm-omni's broken pipeline_ltx2.forward() entirely. Instantiate
-diffusers.LTX2Pipeline directly, plug in our Neuron-resident transformer
-as a swap-in for `pipe.transformer`, and call `pipe(...)` as the diffusers
-pipeline. This works around the vendor bug. ~half-day port.
+**Cost:** Hours of debugging + container-side patches not in git.
+**Risk:** May hit more issues behind it (we're 13 deep now).
 
-Drawback: we no longer use vllm-omni's serving infrastructure (request
-batching, async scheduling). But we DO produce real LTX-2 video on
-Neuron, which is the customer-facing deliverable.
+### Path 2 — Pivot to diffusers' own LTX2Pipeline.__call__ (RECOMMENDED)
 
-### Path 3 — wait for Beta 2 Omni
-Check if a Beta 2/3 vllm-omni image has fixed this. The Beta 3 native
-DLC (`concourse-release-0461d3b:latest`) doesn't have `vllm_omni`
-installed at all, only `torch_neuronx`. So there's no Beta 3 Omni
-image yet.
+Override `NeuronLTX2Pipeline.forward(req)` to delegate to `diffusers.LTX2Pipeline.__call__()` with our Neuron-resident DiT plugged in via `pipe.transformer = self._NeuronTransformerWrapper`. This bypasses ALL of vllm-omni's `pipeline_ltx2.forward()` AND `ltx2_transformer.forward()` — diffusers' reference forward goes through **diffusers-native** `LTX2VideoTransformer3DModel` (without vLLM-Omni's parallel-layer port).
 
-## Recommendation
+Trade-off: diffusers' DiT isn't vLLM-parallel-aware, so we'd run un-sharded on a single 96GB Neuron core (LTX-2 19B might just fit at bf16 ≈ 38GB weights + activations).
 
-Path 2 is fastest to a real LTX-2 video on Trainium today. Path 1 is
-the right long-term fix.
+**This is exactly what Jim's NxDI port does.** They use diffusers' pipeline + a `NeuronTransformerWrapper` swap-in. We get to copy that pattern more closely.
 
-## Files in this directory
+### Path 3 — Wait for vllm-omni next image
 
-- `neuron_ltx2_pipeline.py` — our subclass (overrides `__init__`, `to`,
-  `_get_gemma_prompt_embeds`, `compile`, `load_weights`)
-- `run_ltx2_omni.py` — runner mirroring `examples/wan22/run.py` with a
-  `--bench-runs N` flag for warm timing
-- `ltx2_stage.yaml` — Omni stage config (TP=4)
-- `STATUS.md` — this file
+Beta 1 LTX-2 path is clearly untested on Neuron. The team will fix; we lose customer-facing time but eliminate the surgery cost.
 
-## Validated works on this hardware
+## Fixes baked into `neuron_ltx2_pipeline.py` (committed on this branch)
 
-- Wan2.2-T2V-A14B dev mode generated a real .mp4 at
-  `customers/fal/results/wan22_dev_first.mp4` — proves the vLLM-Omni
-  serving path is fully functional for video diffusion on this Neuron
-  setup.
-- The bug above is **specifically in the LTX-2 pipeline glue inside
-  vLLM-Omni Beta 1**, not in the runtime/scheduler/worker plumbing.
+All 11 prior fixes + the new wrapper:
 
-## Key env vars (mandatory)
+1. ✅ Weight loading via framework `(name, tensor)` iterable — strip + re-prefix `transformer.inner.`
+2. ✅ Gemma3 encoder stays on CPU (`_get_gemma_prompt_embeds` override)
+3. ✅ encode_prompt return-tuple `(embeds, mask)`
+4. ✅ Attention mask dtype pre-cast on CPU before Neuron move
+5. ✅ Connectors API mismatch (`additive_mask` kwarg) via `_ConnectorsCompatWrapper`
+6. ✅ Connectors dtype trap — wrapper round-trips inputs to CPU, runs, moves outputs back
+7. ✅ RoPE `prepare_video_coords` on CPU
+8. ✅ RoPE `prepare_audio_coords` on CPU
+9. ✅ Video latent dtype forced bf16 (positional dtype @ index 6)
+10. ✅ Audio latent dtype forced bf16 (kwarg)
+11. ✅ SDPA data-dependent branch (`if torch.all(...)`) — in-container `pass` patch
+12. ✅ **`_NeuronTransformerWrapper`** — eager wrapper around the DiT for CPU↔Neuron coord move outside `torch.compile`
 
-```bash
-NEURON_SKIP_EFA_AFFINITY=1                 # without this, workers die at init
-NEURON_USE_VANILLA_TORCH_XLA=1
-TORCH_NEURONX_DISABLE_FALLBACK_EXECUTION=1
-VLLM_SLEEP_WHEN_IDLE=1
-NEURON_LOGICAL_NC_CONFIG=2
-VLLM_NEURON_COMPILATION_TIMEOUT=3600
-NEURON_SCRATCHPAD_PAGE_SIZE=2048
-NEURON_CC_FLAGS="--model-type=transformer --optlevel 1"
-TOKENIZERS_PARALLELISM=false
-```
+## Files
 
-## Reproduce
+- `customers/fal/ltx2-omni/neuron_ltx2_pipeline.py` — current pipeline (~830 lines)
+- `customers/fal/ltx2-omni/run_ltx2_omni.py` — runner with `--bench-runs` flag
+- `customers/fal/ltx2-omni/ltx2_stage.yaml` — Omni stage config (TP=4)
+- `customers/fal/ltx2-omni/DECISIONS.md` — full decision log
 
-```bash
-ssh ubuntu@3.150.135.217
-sudo docker exec -e NEURON_SKIP_EFA_AFFINITY=1 \
-  -e TOKENIZERS_PARALLELISM=false \
-  vllm_omni bash -c \
-  'cd /work/ltx2 && python run_ltx2_omni.py --dev --tensor-parallel-size 4'
-```
+## Reference: Jim Burtoft's NxDI port (the working LTX-2 on Trainium)
 
-The run will get to `_dummy_run()` and fail with the connectors error
-above.
+`neuron/external/pr-117-nxdi-diffusion-models/contrib/models/ltx2-video-audio/`
+
+Validated end-to-end at 22s warm @ 384×512/25-frame/8-step on trn2.3xl TP=4. The `NeuronTransformerWrapper` pattern in that file's `pipeline.py::NeuronTransformerWrapper` is what we adopted in `_NeuronTransformerWrapper` here.
+
+If we pivot to Path 2 (diffusers pipeline), the work amounts to:
+1. Take `pipeline.py::NeuronTransformerWrapper` as the template
+2. Re-init in our `NeuronLTX2Pipeline.__init__` with a diffusers-loaded LTX2Pipeline
+3. Swap in the wrapper as `pipe.transformer`
+4. Override our `forward(req)` to call `pipe(prompt=req.prompts[0], ...)`
+
+Can be done in a single session.

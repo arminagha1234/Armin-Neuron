@@ -58,6 +58,300 @@ PIPELINE_REGISTRY = [
 ]
 
 
+def _patch_coord_prep_to_cpu(transformer):
+    """Force the transformer's RoPE coordinate-prep methods to RETURN CPU tensors.
+
+    `prepare_video_coords` / `prepare_audio_coords` live on the RoPE
+    submodules (`transformer.rope` and `transformer.audio_rope`), and the
+    pipeline calls them with `device` as a POSITIONAL argument:
+        transformer.rope.prepare_video_coords(B, F, H, W, latents.device, fps=...)
+        transformer.audio_rope.prepare_audio_coords(B, F, audio.device)
+
+    They build grid coordinates with meshgrid → stack → flatten → repeat
+    + in-place index assignment. On Neuron those produce non-contiguous
+    tensors and use in-place ops the lazy backend rejects
+    (`Expected self.is_contiguous() to be true`).
+
+    Critical detail: pipeline_ltx2.py:1090 then does
+        video_coords = video_coords.repeat((2,) + (1,)*(coords.ndim-1))
+    which, if coords are on Neuron, also trips the same contiguity error
+    (this is the catch-22 that defeated previous attempts).
+
+    Fix: leave coords on CPU here. They're tiny, data-independent, and
+    the pipeline's `.repeat(...)` is a CPU op. The
+    `_NeuronTransformerWrapper.forward()` then moves them to the Neuron
+    device + `.contiguous()` right before calling the compiled inner
+    DiT — outside the compile boundary, so it's a no-op for compiled
+    inputs. See ltx2-omni-DECISIONS.md.
+    """
+    import torch as _torch
+
+    # (submodule_attr, method_name, positional index of the `device` arg)
+    targets = [
+        ("rope", "prepare_video_coords", 4),
+        ("audio_rope", "prepare_audio_coords", 2),
+    ]
+
+    for sub_attr, meth_name, dev_pos in targets:
+        sub = getattr(transformer, sub_attr, None)
+        if sub is None:
+            continue
+        orig = getattr(sub, meth_name, None)
+        if orig is None:
+            continue
+
+        def _make_wrapper(_orig, _dev_pos):
+            def _wrapped(*args, **kwargs):
+                new_args = list(args)
+                # Force coord prep to run on CPU and KEEP coords on CPU.
+                # Pipeline_ltx2's `.repeat()` after this call is a CPU op
+                # if coords are CPU. The Neuron move happens later in
+                # `_NeuronTransformerWrapper.forward()` (eager, outside
+                # the compile boundary) so the compiled inner DiT still
+                # sees Neuron-resident coords.
+                if "device" in kwargs:
+                    kwargs["device"] = _torch.device("cpu")
+                elif len(new_args) > _dev_pos and isinstance(
+                    new_args[_dev_pos], (_torch.device, str)
+                ):
+                    new_args[_dev_pos] = _torch.device("cpu")
+                out = _orig(*new_args, **kwargs)
+                if hasattr(out, "contiguous"):
+                    out = out.contiguous()
+                return out
+            return _wrapped
+
+        setattr(sub, meth_name, _make_wrapper(orig, dev_pos))
+
+
+def _patch_sdpa_data_dependent_branch():
+    """No-op stub: the in-container `sdpa.py` already has the correct
+    inline patch for the data-dependent branch.
+
+    Earlier we tried to monkey-patch `_maybe_reshape_attn_mask` to return
+    the mask unchanged. That was WRONG: the original function does a
+    necessary 2D→4D reshape (for `broadcast_k` it goes
+    `[B, S_k] → [B, 1, 1, S_k]`). Skipping that reshape feeds SDPA the
+    raw 2D mask which then can't broadcast to `[B, H, S_q, S_k]` —
+    surface error: "Attempting to broadcast a dimension of length 128
+    at -1".
+
+    The actual fix lives directly in
+    `/opt/conda/lib/python3.12/site-packages/vllm_omni/diffusion/
+    attention/backends/sdpa.py`: the `if torch.all(...)` block was
+    replaced with `pass` (we keep the original `.bak`). That's the only
+    change needed — remove the data-dependent branch but keep the
+    reshape that follows.
+
+    This stub is kept so the pipeline file documents the situation and
+    is easy to extend if a future container layout needs a runtime
+    patch instead. See ltx2-omni-DECISIONS.md.
+    """
+    return
+
+
+# Apply the SDPA patch at import time (idempotent no-op today; container-side
+# inline patch handles the real fix).
+_patch_sdpa_data_dependent_branch()
+
+
+class _NeuronTransformerWrapper(nn.Module):
+    """Eager wrapper around the LTX-2 DiT transformer.
+
+    Sits OUTSIDE the torch.compile boundary so it can do data-movement
+    that the compiled graph can't tolerate (CPU→Neuron coord move,
+    contiguity, dtype coercion). All Neuron-specific data-prep happens
+    in this wrapper's `forward()`; the inner DiT stays pure tensor math
+    that compiles cleanly.
+
+    This pattern is borrowed from Jim Burtoft's NxDI LTX-2 port
+    (`neuron/external/pr-117-nxdi-diffusion-models/contrib/models/
+    ltx2-video-audio/src/pipeline.py::NeuronTransformerWrapper`) which
+    solved the same catch-22 in the NxDI flow. The shape difference:
+    NxDI compiles a separate "backbone" (blocks-only); we compile the
+    full DiT and just wrap it with a coord-mover.
+
+    Pipeline-visible interface (the base `LTX2Pipeline.forward()`
+    accesses these attributes on `self.transformer`, so the wrapper
+    proxies them):
+        .config           — DiT config
+        .dtype            — for `latents.to(prompt_embeds.dtype)`
+        .rope             — for `transformer.rope.prepare_video_coords`
+        .audio_rope       — for `transformer.audio_rope.prepare_audio_coords`
+        .cache_context    — optional, for `_transformer_cache_context`
+        .__call__         — forward()
+    """
+
+    def __init__(self, inner: nn.Module):
+        super().__init__()
+        # Store under a non-`_modules` name so torch's auto-wrap doesn't
+        # try to compile it via `self.compile()`. We DO want it tracked
+        # for `.parameters()`, `.to()`, etc., so register as a child.
+        self.inner = inner
+        # Cached target device — lazily resolved on first forward().
+        self._target_device = None
+
+    # --- attribute proxies (the base pipeline reads these) -----------
+    @property
+    def config(self):
+        return self.inner.config
+
+    @property
+    def dtype(self):
+        return self.inner.dtype if hasattr(self.inner, "dtype") else torch.bfloat16
+
+    @property
+    def rope(self):
+        return self.inner.rope
+
+    @property
+    def audio_rope(self):
+        return self.inner.audio_rope
+
+    @property
+    def cache_context(self):
+        # Optional; pipeline's `_transformer_cache_context` checks
+        # `callable(...)` so we forward only when the inner has it.
+        return getattr(self.inner, "cache_context", None)
+
+    # --- forward (data-prep + compiled call) -------------------------
+    def _resolve_target_device(self):
+        """Find the device the inner is on (its first parameter)."""
+        if self._target_device is not None:
+            return self._target_device
+        for p in self.inner.parameters():
+            self._target_device = p.device
+            return self._target_device
+        # Fallback: the local Neuron device.
+        self._target_device = get_local_device()
+        return self._target_device
+
+    def forward(self, *args, **kwargs):
+        target = self._resolve_target_device()
+        # Coords come from the pipeline as CPU tensors (we patched the
+        # coord-prep). Move them to the inner's device with .contiguous()
+        # right before the compiled call, eagerly — outside compile.
+        for key in ("video_coords", "audio_coords"):
+            v = kwargs.get(key)
+            if v is not None and hasattr(v, "to") and v.device != target:
+                kwargs[key] = v.contiguous().to(device=target)
+
+        # Hidden states should already be on Neuron (they come from
+        # latents which we forced to bf16+Neuron in prepare_latents),
+        # but ensure contiguity for the in-place reshapes downstream.
+        for key in ("hidden_states", "audio_hidden_states"):
+            v = kwargs.get(key)
+            if v is not None and hasattr(v, "is_contiguous") and not v.is_contiguous():
+                kwargs[key] = v.contiguous()
+
+        return self.inner(*args, **kwargs)
+
+    # --- weight-loading + compile passthroughs -----------------------
+    def load_weights(self, weights):
+        """Forward the framework's (name, tensor) iterable to the inner."""
+        if hasattr(self.inner, "load_weights"):
+            return self.inner.load_weights(weights)
+        return set()
+
+    def compile(self, *args, **kwargs):
+        """Compile the INNER DiT, not the wrapper.
+
+        We want the data-prep in `_NeuronTransformerWrapper.forward()` to
+        stay eager (so coord moves happen outside the compile boundary).
+        Calling `self.inner.compile(...)` swaps the inner's `forward` /
+        `__call__` with the dynamo-wrapped version; the outer wrapper's
+        `forward` just dispatches to `self.inner(...)` which goes through
+        the compiled path.
+        """
+        if hasattr(self.inner, "compile"):
+            self.inner.compile(*args, **kwargs)
+        return self
+
+    def to(self, *args, **kwargs):
+        # Reset cached device — the inner may move.
+        self._target_device = None
+        self.inner.to(*args, **kwargs)
+        return self
+
+
+class _ConnectorsCompatWrapper(nn.Module):
+    """Adapter for the vLLM-Omni-Beta-1 ↔ diffusers-0.38 connectors API gap.
+
+    vLLM-Omni's pipeline_ltx2.forward() calls:
+        connectors(prompt_embeds, additive_attention_mask, additive_mask=True)
+
+    but diffusers 0.38 LTX2TextConnectors.forward() signature is:
+        forward(text_encoder_hidden_states, attention_mask,
+                padding_side="left", scale_factor=8)
+
+    Two differences:
+      1. No `additive_mask` kwarg in diffusers — we drop it.
+      2. vLLM-Omni passes an *additive* mask: `(1 - binary_mask) * -1e6`
+         (0.0 where keep, -1e6 where drop). diffusers wants a
+         *multiplicative binary* mask (1 where keep, 0 where drop).
+         We convert: binary = (additive >= -0.5) → 1.0, else 0.0.
+         (additive is 0.0 on kept positions, -1e6 on dropped — so a
+         threshold near 0 recovers the binary mask.)
+
+    This wrapper lets us keep vLLM-Omni's `forward()` intact (it has all
+    the audio/CFG/two-stage logic) while fixing only the broken call.
+    Delete this wrapper when a Beta 2/3 Omni image fixes the connectors
+    API. See ltx2-omni-DECISIONS.md.
+    """
+
+    def __init__(self, inner):
+        super().__init__()
+        self.inner = inner
+
+    def forward(self, hidden_states, mask, additive_mask=False, **kwargs):
+        import torch as _torch
+
+        # The connectors module lives on CPU (we kept the lighter
+        # components off the Neuron core). The vLLM-Omni forward() passes
+        # Neuron-resident tensors here, so move inputs to CPU, run, and
+        # move the outputs back to the original device. Two-step dtype/
+        # device moves throughout to dodge Neuron's combined-.to() trap.
+        orig_device = hidden_states.device
+        inner_dtype = next(self.inner.parameters()).dtype
+
+        hs_cpu = hidden_states.to(device="cpu")
+        hs_cpu = hs_cpu.to(dtype=inner_dtype)
+        mask_cpu = mask.to(device="cpu")
+
+        if additive_mask:
+            # Convert additive (0 / -1e6) → multiplicative binary (1 / 0).
+            binary_mask = (mask_cpu >= -0.5).to(inner_dtype)
+        else:
+            binary_mask = mask_cpu.to(inner_dtype)
+
+        padding_side = kwargs.pop("padding_side", "left")
+        scale_factor = kwargs.pop("scale_factor", 8)
+
+        with _torch.no_grad():
+            out = self.inner(
+                hs_cpu,
+                binary_mask,
+                padding_side=padding_side,
+                scale_factor=scale_factor,
+            )
+
+        # out is a tuple (connector_prompt_embeds,
+        # connector_audio_prompt_embeds, connector_attention_mask).
+        # Move each back to the Neuron device in two steps.
+        def _back(t):
+            if t is None or not hasattr(t, "to"):
+                return t
+            return t.to(device=orig_device)
+
+        if isinstance(out, tuple):
+            return tuple(_back(t) for t in out)
+        return _back(out)
+
+    def to(self, *args, **kwargs):
+        self.inner.to(*args, **kwargs)
+        return self
+
+
 class NeuronLTX2Pipeline(LTX2Pipeline):
     """LTX-2 T2V pipeline for Neuron.
 
@@ -123,6 +417,17 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
             torch_dtype=dtype,
             local_files_only=local_files_only,
         )  # stays on CPU
+        # vLLM-Omni Beta 1's pipeline_ltx2.forward() calls
+        #   self.connectors(embeds, additive_attention_mask, additive_mask=True)
+        # but the diffusers 0.38 LTX2TextConnectors.forward() signature is
+        #   forward(text_encoder_hidden_states, attention_mask,
+        #           padding_side="left", scale_factor=8)
+        # — it has no `additive_mask` kwarg, and it wants a *multiplicative
+        # binary* mask (1s=keep, 0s=drop), not the additive (1-mask)*-1e6
+        # form vllm-omni passes. This is a vendor API mismatch in Beta 1.
+        # We wrap the connectors so the vllm-omni-style call is translated
+        # to the diffusers-style call. See ltx2-omni-DECISIONS.md.
+        self.connectors = _ConnectorsCompatWrapper(self.connectors)
         # VAE is small enough that we keep on CPU for v1. Phase 2 → Neuron tiled.
         self.vae = AutoencoderKLLTX2Video.from_pretrained(
             model, subfolder="vae",
@@ -155,7 +460,26 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
         transformer_config = load_transformer_config(
             model, "transformer", local_files_only,
         )
-        self.transformer = create_transformer_from_config(transformer_config)
+        inner_transformer = create_transformer_from_config(transformer_config)
+        # Patch the transformer's coordinate-prep methods to RETURN CPU
+        # tensors. `prepare_video_coords` (and its audio sibling) build
+        # RoPE grid coordinates with meshgrid/stack/flatten/repeat +
+        # in-place index assignment — on Neuron these trip
+        # `Expected self.is_contiguous() to be true`. The coords are
+        # tiny and data-independent, so we run them on CPU. The
+        # pipeline then does `coords.repeat(...)` (CPU op, fine), and
+        # the `_NeuronTransformerWrapper.forward()` below moves coords
+        # to Neuron+contiguous right before the compiled call — outside
+        # the compile boundary. See ltx2-omni-DECISIONS.md.
+        _patch_coord_prep_to_cpu(inner_transformer)
+        # Wrap with `_NeuronTransformerWrapper` so the data-movement
+        # (CPU→Neuron coord move, contiguity) stays eager (outside
+        # `torch.compile`). The wrapper proxies `.config`, `.dtype`,
+        # `.rope`, `.audio_rope`, and `.cache_context` so the base
+        # `LTX2Pipeline.forward()` sees an LTX2-compatible object.
+        # Calling `.compile()` on the wrapper compiles the INNER DiT,
+        # leaving the wrapper's data-prep eager.
+        self.transformer = _NeuronTransformerWrapper(inner_transformer)
         # We do NOT call self.transformer.to(self.device) here — the engine
         # calls pipeline.to(neuron_device) after __init__, and our
         # to() override below handles the selective move.
@@ -372,8 +696,76 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
     # do that move.
 
     # ------------------------------------------------------------------
+    # prepare_latents — force bf16 + CPU generator
+    # ------------------------------------------------------------------
+    def prepare_latents(self, *args, **kwargs):
+        """Force latents to the transformer dtype (bf16) and use a CPU
+        generator.
+
+        The base `forward()` does `latent_model_input.to(prompt_embeds.dtype)`
+        in the denoising loop (pipeline_ltx2.py:1162). If latents come back
+        in fp32 (the base default) and prompt_embeds is bf16, that `.to()`
+        is a real dtype cast on a Neuron tensor and trips
+        `RuntimeError: Expected self.dtype() == dst.dtype()`. By forcing
+        latents to bf16 here, the later `.to()` becomes a no-op.
+
+        Also: Neuron has no Generator — fall back to a CPU generator with
+        the same seed. Mirrors NeuronWanPipeline.prepare_latents.
+
+        The base `forward()` calls this positionally:
+            prepare_latents(batch_size, num_channels, height, width,
+                            num_frames, noise_scale, dtype, device,
+                            generator, latents)
+        so `dtype` is positional arg index 6 and `generator` is index 8.
+        We rewrite those in-place rather than passing kwargs (which would
+        collide with the positional values).
+        """
+        transformer_dtype = (
+            self.transformer.dtype
+            if (self.transformer is not None and hasattr(self.transformer, "dtype"))
+            else torch.bfloat16
+        )
+        args = list(args)
+        # dtype @ positional index 6
+        if len(args) > 6:
+            args[6] = transformer_dtype
+        elif "dtype" in kwargs:
+            kwargs["dtype"] = transformer_dtype
+        else:
+            kwargs["dtype"] = transformer_dtype
+        # generator @ positional index 8 — force to CPU
+        if len(args) > 8 and isinstance(args[8], torch.Generator) \
+                and args[8].device.type != "cpu":
+            args[8] = torch.Generator(device="cpu").manual_seed(args[8].initial_seed())
+        elif isinstance(kwargs.get("generator"), torch.Generator) \
+                and kwargs["generator"].device.type != "cpu":
+            g = kwargs["generator"]
+            kwargs["generator"] = torch.Generator(device="cpu").manual_seed(g.initial_seed())
+        return super().prepare_latents(*args, **kwargs)
+
+    # ------------------------------------------------------------------
     # Compile + load_weights
     # ------------------------------------------------------------------
+    def prepare_audio_latents(self, *args, **kwargs):
+        """Force audio latents to the transformer dtype + CPU generator.
+
+        Same dtype trap as video latents: the denoising loop does
+        `audio_latent_model_input.to(prompt_embeds.dtype)`
+        (pipeline_ltx2.py:1166). The base is called with `dtype=fp32`
+        as a kwarg here (unlike video which is positional), so we just
+        override the kwarg.
+        """
+        transformer_dtype = (
+            self.transformer.dtype
+            if (self.transformer is not None and hasattr(self.transformer, "dtype"))
+            else torch.bfloat16
+        )
+        kwargs["dtype"] = transformer_dtype
+        g = kwargs.get("generator")
+        if isinstance(g, torch.Generator) and g.device.type != "cpu":
+            kwargs["generator"] = torch.Generator(device="cpu").manual_seed(g.initial_seed())
+        return super().prepare_audio_latents(*args, **kwargs)
+
     def compile_transformer(self, *args, **kwargs):
         """Compile the DiT transformer for Neuron."""
         t_kwargs = copy.deepcopy(kwargs)
@@ -392,7 +784,7 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
         return self
 
     def load_weights(self, weights=None):
-        """Forward the framework's (name, tensor) iterable to the transformer.
+        """Forward the framework's (name, tensor) iterable to the inner DiT.
 
         The framework's diffusers_loader walks `self.weights_sources` (set
         in __init__ to point at the transformer subfolder), iterates the
@@ -401,22 +793,33 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
         LTX2VideoTransformer3DModel.load_weights handles vLLM TP sharding
         internally — we strip the prefix before forwarding (so the
         transformer's parameter dict matches), then we add the prefix
-        back to the names of the loaded set we return (so the framework
-        loader's "weights not initialized" check matches).
+        back to the names of the loaded set we return.
+
+        Naming subtlety with the `_NeuronTransformerWrapper`: because we
+        wrap the DiT in a wrapper named `inner`, the framework's
+        `named_parameters()` sees `transformer.inner.<param>`. So we
+        return names with the `transformer.inner.` prefix to match what
+        the framework's strict-load check expects, while feeding the
+        inner DiT's `load_weights()` an iterable with the leading
+        `transformer.` stripped (matching its own parameter dict).
         """
         if weights is None:
             return set()
         if self.transformer is None or not hasattr(self.transformer, "load_weights"):
             return set()
 
-        prefix = "transformer."
+        in_prefix = "transformer."           # what the framework feeds us
+        out_prefix = "transformer.inner."    # what named_parameters() shows
+
         def _strip_prefix(it):
             for name, tensor in it:
-                if name.startswith(prefix):
-                    name = name[len(prefix):]
+                if name.startswith(in_prefix):
+                    name = name[len(in_prefix):]
                 yield name, tensor
+
+        # `self.transformer` is `_NeuronTransformerWrapper` whose
+        # `.load_weights()` proxies to `inner.load_weights()`.
         loaded = self.transformer.load_weights(_strip_prefix(weights))
-        # Re-prefix so the framework's "expected" set matches what we
-        # return (the framework checks this list against the names from
-        # our safetensors files, which have the `transformer.` prefix).
-        return {prefix + n for n in (loaded or set())}
+        # Re-prefix with `transformer.inner.` so the framework's
+        # "expected vs loaded" set diff matches `named_parameters()`.
+        return {out_prefix + n for n in (loaded or set())}
