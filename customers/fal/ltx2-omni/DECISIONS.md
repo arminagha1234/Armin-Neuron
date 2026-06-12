@@ -362,3 +362,74 @@ just fit).
   already covers it), updated `load_weights` to handle the new
   `transformer.inner.*` namespace.
 
+
+
+---
+
+## Path 2 design sketch — diffusers LTX2Pipeline.__call__ swap-in (next session)
+
+If we pivot to Path 2, the implementation is straightforward. Here's the
+design so we can pick up cleanly.
+
+### The structure
+
+`NeuronLTX2Pipeline` (subclass of vllm-omni `LTX2Pipeline`) keeps its:
+- registry entry (auto-loads as the `LTX2Pipeline` model_arch)
+- `weights_sources` (transformer subfolder only)
+- `to(...)` (selective device move)
+- `compile(...)` (compile transformer only; encoder/VAE eager on CPU)
+
+But adds:
+- A NEW `__init__` path that builds a `diffusers.LTX2Pipeline` instance
+  alongside (or instead of) the components we currently load piecemeal.
+- A `_swap_transformer_to_neuron()` method (mirroring Jim Burtoft's
+  `NeuronLTX2Pipeline._swap_transformer_to_neuron`) that:
+    1. Takes the diffusers pipe's `pipe.transformer` (full diffusers DiT)
+    2. Wraps it in `_NeuronTransformerWrapper` (already written)
+    3. Stores the wrapper as `self.transformer` AND assigns it to
+       `pipe.transformer` (so diffusers' forward() sees our wrapper)
+    4. Frees the original transformer blocks
+
+- A `forward(req)` override that drives diffusers' pipeline directly:
+    ```python
+    def forward(self, req):
+        prompt = req.prompts[0]
+        params = req.sampling_params
+        result = self._diffusers_pipe(
+            prompt=prompt,
+            negative_prompt=params.negative_prompt,
+            height=params.height, width=params.width,
+            num_frames=params.num_frames,
+            num_inference_steps=params.num_inference_steps,
+            guidance_scale=params.guidance_scale,
+            generator=torch.Generator("cpu").manual_seed(params.seed),
+            output_type="pt",
+        )
+        return DiffusionOutput(output=result.frames)
+    ```
+
+### Trade-offs
+
+- **NO tensor parallelism** — diffusers' DiT isn't vLLM-parallel-aware.
+  LTX-2 19B at bf16 = ~38 GB weights, fits in a single 96 GB Neuron
+  core. Inference is slower than TP=4 but it WORKS.
+- Stage YAML: `tensor_parallel_size: 1` (or just don't set it).
+- Loses vllm-omni's CFG-parallel + sequence-parallel features. For
+  fal.ai's per-request video gen workload, that's probably fine —
+  customers care about end-to-end latency per video, not max
+  throughput.
+- Skip-warmup still works the same way.
+
+### Anti-patterns to avoid
+- Don't try to load the diffusers DiT with vLLM parallel layers — it
+  won't work. The whole point of Path 2 is to USE diffusers' native
+  forward as-is.
+- Don't try to also keep using vllm-omni's `pipeline_ltx2.forward`.
+  That's the broken thing we're walking around.
+
+### Ports that already use this pattern (proof points)
+- Jim Burtoft's NxDI port: `neuron/external/pr-117-nxdi-diffusion-models/contrib/models/ltx2-video-audio/src/pipeline.py`
+- Yifan's LTX-2.3 inference scaffold: `neuron/examples/LTX/ltx23_pipeline_v3.py`
+- Both use `LTX2Pipeline.__call__` with a Neuron-resident transformer
+  swap-in.
+
