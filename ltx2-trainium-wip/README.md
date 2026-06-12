@@ -12,9 +12,9 @@ Generated outputs (commit-pinned, see this folder):
 
 | Metric | Trainium2 native PyTorch | H100 (1× of p5.48xl) | gap |
 |---|---:|---:|---:|
-| Setup | 30.3 s | 49 s | 0.62× (Trn faster) |
-| TTFI (cold + NEFF compile) | **165.7 s** | 52.3 s | 3.17× |
-| Warm mean (8 steps, 384×512, 25f) | **164.4 s** (n=3, σ=1.78) | 2.84 s | **57.9×** |
+| Setup | 31.1 s | 49 s | 0.63× (Trn faster) |
+| TTFI (cold + NEFF compile) | **169.3 s** | 52.3 s | 3.24× |
+| Warm mean (8 steps, 384×512, 25f) | **165.4 s** (n=5, σ=0.74, p95=166.2) | 2.84 s | **58.2×** |
 | Per-step transformer only | 6.33 s | 326 ms | 19.4× |
 
 **The 58× warm gap is dominated by CPU flat tax**, not Trainium per-
@@ -120,9 +120,9 @@ torchrun --nproc_per_node=4 --rdzv_backend c10d --rdzv_endpoint localhost:29500 
 1. **Reduce 113 s CPU flat tax** — biggest single lever. Move
    Gemma-3 text encoder + LTX-2 video/audio VAEs onto Neuron via
    NKI/torch.compile. Could shrink warm latency from 164 s to ~50-70 s.
-2. **Steady-state memory hygiene** — bench OOM-killed (-9) after 3
-   warm iterations. Need explicit `gc.collect()` + Neuron buffer free
-   at iteration boundaries; check PIL frame accumulation in harness.
+2. **Steady-state memory hygiene** — explicit `gc.collect()` at
+   iteration boundary (already in `bench_ltx2.py` v2) gives 5 clean
+   warm samples with σ=0.74 s. Earlier v1 OOM-killed (-9) after 3.
 3. **Higher-resolution validation** — only ran 384×512/25f. H100
    reference goes to 768×1024 in 5.5 s; Trainium would scale to
    ~9× per-step at that resolution.

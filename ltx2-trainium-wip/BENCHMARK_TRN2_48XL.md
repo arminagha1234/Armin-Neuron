@@ -13,9 +13,10 @@ LTX-2 inference outside Lightricks' own GPU stack.
 
 | Metric | Value |
 |---|---:|
-| Setup (model load + TP shard + pipeline build) | 30.3 s |
-| Cold first call (TTFI, includes NEFF compile) | **165.7 s** |
-| Warm steady-state (8 steps, 384×512, 25 frames) | **164.4 s** mean (n=3, σ=1.78) |
+| Setup (model load + TP shard + pipeline build) | 31.1 s |
+| Cold first call (TTFI, includes NEFF compile) | **169.3 s** |
+| Warm steady-state (8 steps, 384×512, 25 frames) | **165.4 s** mean (n=5, σ=0.74, p95=166.2) |
+| Per-step total | 20.68 s |
 | Per-step transformer (Neuron) | 6.33 s |
 | Output | 25-frame MP4 + first-frame PNG ✓ |
 
@@ -53,13 +54,13 @@ Config: 384×512, 25 frames, 8 steps, guidance_scale=4.0, seed=42.
 
 | | trn2.48xl native PyTorch | p5.48xl 1× H100 stock | gap |
 |---|---:|---:|---:|
-| TTFI | 165.7 s | 52.3 s | **3.17×** |
-| Warm mean | 164.4 s | 2.84 s | **57.9×** |
+| TTFI | 169.3 s | 52.3 s | **3.24×** |
+| Warm mean | 165.4 s (n=5, σ=0.74, p95=166.2) | 2.84 s (n=6, σ=0.01) | **58.2×** |
 | Per-step (transformer only) | 6.33 s | 326 ms | **19.4×** |
 
 The 58× warm gap is 3× wider than Qwen-Image-Edit's 11× gap. Driver:
 **LTX-2 spends only 31% of warm time in the transformer on Trainium**
-(50 s of 164 s); the other 113 s is CPU-host work (text encoder pass,
+(50 s of 165 s); the other 115 s is CPU-host work (text encoder pass,
 connector mean-norm, VAE encode/decode, audio VAE decode). On H100, the
 same CPU work is amortized inside CUDA dispatch overhead — total CPU
 time on H100 is 230 ms.
@@ -146,10 +147,9 @@ torchrun --nproc_per_node=4 --rdzv_backend c10d --rdzv_endpoint localhost:29500 
   encoder onto Neuron (~5 s CPU now, would be ~1 s on Neuron) and/or
   VAE encode+decode (~30 s CPU now). Multi-day port work; defers if not
   customer priority.
-- **Steady-state memory** — bench-scale runs OOM-killed (-9) after 3
-  warm iterations. Need explicit `gc.collect()` + Neuron buffer free at
-  iteration boundaries; also worth checking PIL frame accumulation in
-  the bench harness.
+- **Steady-state memory** — fixed in `bench_ltx2.py` v2 with explicit
+  `gc.collect()` at iteration boundary; ran 5 clean warm samples with
+  σ=0.74 s. Earlier v1 OOM-killed (-9) after 3 iterations.
 - **Higher resolution and longer videos** — only ran 384×512/25f. H100
   reference goes to 768×1024 in 5.5 s; Trainium would scale to ~9× that
   per-step (~50 s/step at 50 steps = 41 minutes for full canonical).

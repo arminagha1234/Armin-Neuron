@@ -207,7 +207,10 @@ def time_call(pipe, *, prompt, h, w, frames, steps, seed=42):
             output_type="pil",
         )
     elapsed = time.time() - t0
-    return elapsed, result
+    # Drop result frames, force gc + cuda-equivalent buffer release
+    del result
+    gc.collect()
+    return elapsed, None
 
 
 def percentile(xs, q):
