@@ -76,11 +76,17 @@ def ltx2_tp_plan(world_size: int) -> dict:
         plan[f"{prefix}.audio_attn2.to_v"] = ColwiseParallel()
         plan[f"{prefix}.audio_attn2.to_out.0"] = RowwiseParallel()
 
-        # Audio→Video cross-attention
+        # Audio→Video cross-attention (Q: Video, K,V: Audio; uses audio_num_attention_heads=32)
         plan[f"{prefix}.audio_to_video_attn.to_q"] = ColwiseParallel()
         plan[f"{prefix}.audio_to_video_attn.to_k"] = ColwiseParallel()
         plan[f"{prefix}.audio_to_video_attn.to_v"] = ColwiseParallel()
         plan[f"{prefix}.audio_to_video_attn.to_out.0"] = RowwiseParallel()
+
+        # Video→Audio cross-attention (Q: Audio, K,V: Video)
+        plan[f"{prefix}.video_to_audio_attn.to_q"] = ColwiseParallel()
+        plan[f"{prefix}.video_to_audio_attn.to_k"] = ColwiseParallel()
+        plan[f"{prefix}.video_to_audio_attn.to_v"] = ColwiseParallel()
+        plan[f"{prefix}.video_to_audio_attn.to_out.0"] = RowwiseParallel()
 
         # Video FFN (FeedForward typically has net.0.proj (gate+up) and net.2 (down))
         plan[f"{prefix}.ff.net.0.proj"] = ColwiseParallel()
@@ -215,7 +221,8 @@ def install_adaptive_qk_norm(model, world_size: int, rank: int):
 
 
 def patch_rope_rank_slice(model, world_size: int, rank: int):
-    """Slice every RoPE module's cos/sin output by this rank's head range.
+    """Slice every RoPE module's cos/sin output by this rank's head range,
+    AND force-build coords on CPU then move to neuron (eliminates meta leak).
 
     LTX-2 has FOUR RoPE modules on the top-level transformer:
         - rope                  (video self-attn,  num_attention_heads=32)
@@ -223,22 +230,34 @@ def patch_rope_rank_slice(model, world_size: int, rank: int):
         - cross_attn_rope       (video cross-attn, num_attention_heads=32)
         - cross_attn_audio_rope (audio cross-attn, audio_num_attention_heads=32)
 
-    Each returns cos/sin of shape (B, H, T, D//2) for `split` rope (or
-    (B, T, 2r) for interleaved). After ColwiseParallel shards q/k/v, each
-    rank only holds H/world_size heads, so we slice axis 1 of cos/sin to
-    [rank*H_local : (rank+1)*H_local].
-
-    We read each module's own `num_attention_heads` so audio (which may
-    differ) is handled correctly.
+    Each returns cos/sin of shape (B, H, T, D//2) for split rope, or
+    (B, T, 2r) for interleaved. After ColwiseParallel shards q/k/v,
+    each rank only holds H/world_size heads, so we slice axis 1 of
+    cos/sin to [rank*H_local : (rank+1)*H_local].
     """
     rope_attrs = ["rope", "audio_rope", "cross_attn_rope", "cross_attn_audio_rope"]
-    patched = []
 
+    # Find the rope class
+    rope_cls = None
+    for attr in rope_attrs:
+        rope = getattr(model, attr, None)
+        if rope is not None:
+            rope_cls = type(rope)
+            break
+    if rope_cls is None:
+        if rank == 0:
+            print(f"[ltx2_tp_plan] no rope class found", flush=True)
+        return
+
+    neuron = torch.device("neuron")
+    cpu = torch.device("cpu")
+
+    # Per-rope-instance head ranges
+    head_ranges = {}
     for attr in rope_attrs:
         rope = getattr(model, attr, None)
         if rope is None:
             continue
-
         full_heads = getattr(rope, "num_attention_heads", N_HEADS_FULL)
         if full_heads % world_size != 0:
             if rank == 0:
@@ -247,84 +266,63 @@ def patch_rope_rank_slice(model, world_size: int, rank: int):
                       flush=True)
             continue
         h_local = full_heads // world_size
-        start = rank * h_local
-        end = start + h_local
+        # Mark this instance with its head range
+        rope._tp_head_start = rank * h_local
+        rope._tp_head_end = rope._tp_head_start + h_local
+        head_ranges[attr] = (rope._tp_head_start, rope._tp_head_end)
 
-        # Bind loop vars via default args to avoid late-binding bug
-        _orig = rope.forward
+    # Save class originals once
+    if not hasattr(rope_cls, "_orig_prepare_video_coords"):
+        rope_cls._orig_prepare_video_coords = rope_cls.prepare_video_coords
+        rope_cls._orig_prepare_audio_coords = rope_cls.prepare_audio_coords
+        rope_cls._orig_forward = rope_cls.forward
 
-        def _sliced(*args, _orig=_orig, _start=start, _end=end, _attr=attr, _rank=rank, **kwargs):
-            out = _orig(*args, **kwargs)
-            if isinstance(out, tuple) and len(out) == 2 and torch.is_tensor(out[0]):
-                cos, sin = out
-                if _rank == 0:
-                    print(f"[ltx2_tp_plan] {_attr} rope out cos.device={cos.device} "
-                          f"shape={tuple(cos.shape)} args_dev="
-                          f"{[a.device for a in args if torch.is_tensor(a)]}",
-                          flush=True)
-                # split rope: cos/sin are (B, H, T, D//2) — slice axis 1
-                if cos.dim() == 4:
-                    cos = cos[:, _start:_end]
-                    sin = sin[:, _start:_end]
-                return cos, sin
-            return out
+    def _patched_video_coords(self, *args, **kwargs):
+        # Build on CPU (eliminates any meta-device leakage), move to neuron
+        new_args = [cpu if isinstance(a, torch.device) else a for a in args]
+        if "device" in kwargs:
+            kwargs["device"] = cpu
+        out = rope_cls._orig_prepare_video_coords(self, *new_args, **kwargs)
+        return out.to(neuron) if torch.is_tensor(out) else out
 
-        rope.forward = _sliced
-        patched.append(f"{attr}(heads {start}:{end})")
+    def _patched_audio_coords(self, *args, **kwargs):
+        new_args = [cpu if isinstance(a, torch.device) else a for a in args]
+        if "device" in kwargs:
+            kwargs["device"] = cpu
+        out = rope_cls._orig_prepare_audio_coords(self, *new_args, **kwargs)
+        return out.to(neuron) if torch.is_tensor(out) else out
 
-    # Also force every RoPE's coord-prep + forward to use the neuron
-    # device, since the meta tensor originates from a `device=` arg that
-    # propagated from a meta-built internal tensor (e.g. audio latents).
-    _force_rope_device_neuron(model, rope_attrs, rank)
+    def _patched_forward(self, *args, **kwargs):
+        # Move coords positional to CPU for freq computation, force device=cpu,
+        # then move outputs to neuron AND slice by this rank's head range.
+        new_args = list(args)
+        if new_args and torch.is_tensor(new_args[0]):
+            new_args[0] = new_args[0].to(cpu)
+        if "device" in kwargs:
+            kwargs["device"] = cpu
+        out = rope_cls._orig_forward(self, *new_args, **kwargs)
+        if isinstance(out, tuple) and len(out) == 2 and torch.is_tensor(out[0]):
+            cos, sin = out
+            cos = cos.to(neuron); sin = sin.to(neuron)
+            start = getattr(self, "_tp_head_start", None)
+            end = getattr(self, "_tp_head_end", None)
+            if start is not None and cos.dim() == 4:
+                cos = cos[:, start:end]
+                sin = sin[:, start:end]
+            return cos, sin
+        return out
+
+    rope_cls.prepare_video_coords = _patched_video_coords
+    rope_cls.prepare_audio_coords = _patched_audio_coords
+    rope_cls.forward = _patched_forward
 
     if rank == 0:
-        print(f"[ltx2_tp_plan] patched RoPE rank slices: {patched}", flush=True)
+        print(f"[ltx2_tp_plan] monkey-patched {rope_cls.__name__}: "
+              f"coords build on CPU → .to(neuron); per-rank head slice "
+              f"applied. ranges={head_ranges}", flush=True)
 
 
 def _force_rope_device_neuron(model, rope_attrs, rank):
-    """Force RoPE coord-prep and forward to compute on the neuron device.
-
-    The LTX-2 transformer calls e.g.
-        self.rope(video_coords, device=hidden_states.device)
-    If that device is `meta` (because an internally-created latent stayed
-    on meta), the cos/sin come out on meta and the downstream multiply
-    against the (neuron) query fails. We override the `device` kwarg /
-    positional to always be neuron.
-    """
-    neuron = torch.device("neuron")
-
-    def _wrap(mod):
-        if not hasattr(mod, "forward"):
-            return
-        _orig = mod.forward
-
-        def _f(*args, _orig=_orig, **kwargs):
-            # RoPE coords are positional-only — always compute on neuron
-            # regardless of the device arg propagated from internal
-            # (possibly meta) tensors.
-            if "device" in kwargs:
-                kwargs["device"] = neuron
-            return _orig(*args, **kwargs)
-        mod.forward = _f
-
-        # also wrap prepare_video_coords / prepare_audio_coords
-        for prep in ("prepare_video_coords", "prepare_audio_coords"):
-            if hasattr(mod, prep):
-                _origp = getattr(mod, prep)
-
-                def _pf(*args, _origp=_origp, **kwargs):
-                    # Force any torch.device positional/kwarg to neuron
-                    new_args = [neuron if isinstance(a, torch.device) else a
-                                for a in args]
-                    if "device" in kwargs:
-                        kwargs["device"] = neuron
-                    return _origp(*new_args, **kwargs)
-                setattr(mod, prep, _pf)
-
-    for attr in rope_attrs:
-        rope = getattr(model, attr, None)
-        if rope is not None:
-            _wrap(rope)
-    if rank == 0:
-        print(f"[ltx2_tp_plan] forced RoPE coord device → neuron on "
-              f"meta-device calls", flush=True)
+    """Deprecated — kept for backward compat. Class-level patch in
+    patch_rope_rank_slice now handles both device coercion AND head slice."""
+    pass

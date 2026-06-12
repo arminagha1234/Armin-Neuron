@@ -1,0 +1,42 @@
+{
+  "stack": "Beta 3, native PyTorch, torch_neuronx, TP=4",
+  "torch_version": "2.11.0+cu130",
+  "world_size": 4,
+  "config": {
+    "width": 512,
+    "height": 384,
+    "frames": 25,
+    "steps": 8,
+    "guidance_scale": 4.0,
+    "max_sequence_length": 1024,
+    "dtype": "bfloat16"
+  },
+  "setup_seconds": 30.3,
+  "ttfi_seconds": 165.7,
+  "warm": {
+    "samples_seconds": [163.13, 163.63, 166.48],
+    "n": 3,
+    "mean": 164.41,
+    "median": 163.63,
+    "stdev": 1.78,
+    "p50": 163.63,
+    "per_step_mean_s": 20.55,
+    "per_step_transformer_only_s": 6.33,
+    "ttfi_compile_overhead_s": 1.3
+  },
+  "notes": [
+    "Warm runs 4 and 5 SIGKILL'd (-9) — Neuron runtime accumulates activation memory across iterations without explicit gc + cache flush; next bench should free at iteration boundary.",
+    "Per-step transformer-only is from the diffusers progress bar (6.3 s/step at 8 steps).",
+    "Total per-step = 20.5 s but 13.8 s of that is amortized CPU work (text encoder + connectors + VAE encode/decode + audio_VAE).",
+    "TTFI ≈ warm (1.3 s gap) — NEFF cache hit on second call confirms persistence."
+  ],
+  "stage_inferred": {
+    "transformer_neuron_seconds": 50.6,
+    "cpu_overhead_seconds": 113.8,
+    "cpu_overhead_pct": 69.2
+  },
+  "outputs": {
+    "first_frame_png": "/opt/dlami/nvme/ltx2/results/ltx2_run.png",
+    "video_mp4": "/opt/dlami/nvme/ltx2/results/ltx2_run.mp4"
+  }
+}

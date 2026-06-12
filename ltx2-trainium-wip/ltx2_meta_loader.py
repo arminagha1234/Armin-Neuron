@@ -51,11 +51,11 @@ from torch import nn
 # Patterns: (regex, shard_dim or None for replicate)
 SHARD_RULES: list[tuple[re.Pattern[str], int | None]] = [
     # Video + audio attention QKV — column shard
-    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn)\.to_[qkv]\.weight$"), 0),
-    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn)\.to_[qkv]\.bias$"), 0),
+    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn|video_to_audio_attn)\.to_[qkv]\.weight$"), 0),
+    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn|video_to_audio_attn)\.to_[qkv]\.bias$"), 0),
     # Attention output projection — row shard
-    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn)\.to_out\.0\.weight$"), 1),
-    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn)\.to_out\.0\.bias$"), None),
+    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn|video_to_audio_attn)\.to_out\.0\.weight$"), 1),
+    (re.compile(r"\.(attn1|attn2|audio_attn1|audio_attn2|audio_to_video_attn|video_to_audio_attn)\.to_out\.0\.bias$"), None),
 
     # Video FFN
     (re.compile(r"\.ff\.net\.0\.proj\.weight$"), 0),

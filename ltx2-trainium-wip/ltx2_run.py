@@ -329,13 +329,54 @@ def main():
             return latents.to(torch.device('neuron'))
         pipe._encode_vae_image = _patched_vae_enc
 
+    # Move VAE to CPU explicitly so VAE decode/encode runs on CPU.
+    # Otherwise the pipeline auto-moves VAE to neuron and then the patched
+    # vae.decode that moves latents to CPU produces a device mismatch.
+    try:
+        pipe.vae = pipe.vae.to(cpu_dev)
+        if rank == 0:
+            print(f"[ltx2_run] VAE moved to CPU", flush=True)
+    except Exception as e:
+        if rank == 0:
+            print(f"[ltx2_run] VAE.to(cpu) skipped: {e}", flush=True)
+
+    # Same for audio_vae if present
+    if hasattr(pipe, "audio_vae"):
+        try:
+            pipe.audio_vae = pipe.audio_vae.to(cpu_dev)
+            if rank == 0:
+                print(f"[ltx2_run] audio_vae moved to CPU", flush=True)
+        except Exception as e:
+            if rank == 0:
+                print(f"[ltx2_run] audio_vae.to(cpu) skipped: {e}", flush=True)
+
     _orig_vae_dec = pipe.vae.decode
 
-    def _patched_vae_dec(z, return_dict=True):
-        if hasattr(z, "to"):
-            z = z.to(cpu_dev)
-        return _orig_vae_dec(z, return_dict=return_dict)
+    def _patched_vae_dec(*args, **kwargs):
+        # Diffusers calls: pipe.vae.decode(latents, timestep, return_dict=False)
+        # Move all tensor positionals (and any tensor kwargs) to CPU.
+        new_args = []
+        for a in args:
+            if torch.is_tensor(a):
+                new_args.append(a.to(cpu_dev))
+            else:
+                new_args.append(a)
+        new_kwargs = {}
+        for k, v in kwargs.items():
+            new_kwargs[k] = v.to(cpu_dev) if torch.is_tensor(v) else v
+        return _orig_vae_dec(*new_args, **new_kwargs)
     pipe.vae.decode = _patched_vae_dec
+
+    # Same wrap for audio_vae.decode
+    if hasattr(pipe, "audio_vae"):
+        _orig_avd = pipe.audio_vae.decode
+
+        def _patched_avd(*args, **kwargs):
+            new_args = [a.to(cpu_dev) if torch.is_tensor(a) else a for a in args]
+            new_kwargs = {k: (v.to(cpu_dev) if torch.is_tensor(v) else v)
+                          for k, v in kwargs.items()}
+            return _orig_avd(*new_args, **new_kwargs)
+        pipe.audio_vae.decode = _patched_avd
 
     if rank == 0:
         print(f"\n[ltx2_run] generating: {args.width}×{args.height}, "
