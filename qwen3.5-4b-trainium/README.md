@@ -250,6 +250,16 @@ The decode throughput (~18 tok/s) is the bottleneck for the customer's
    the current Python split-K matmul in `Qwen3_5GQAAttention.forward_decode`
    (stock `NF.attention_decode` rejects head_dim>128). Expected
    1.3-2× decode on the 8 GQA layers.
+
+   **Status (2026-06-12):** v1 is written, parity-validated (cos > 0.99998
+   across S_ctx ∈ [128, 4096]), wired into the model behind
+   `QWEN35_NKI_DECODE=1`, and benchmarked end-to-end. **Result: v1 is 20%
+   SLOWER than the eager path neuronx-cc auto-fuses** (63.7 vs 79.6 tok/s
+   decode). Detailed A/B in [`BENCHMARK_NKI_VS_EAGER.md`](./BENCHMARK_NKI_VS_EAGER.md).
+   v1 uses a two-pass softmax and an extra K transpose; v2 will switch
+   to flash-attention online softmax + the `attention_tkg` stationary/
+   moving layout. The kernel + integration code are in this repo at
+   [`nki-kernels/`](../nki-kernels/) with status notes in [`nki-kernels/STATUS.md`](../nki-kernels/STATUS.md).
 2. **Fused DeltaNet recurrent-step NKI kernel** — replaces ~10
    elementwise ops per token across the 24 GDN layers. Expected
    1.5-2× on those layers.

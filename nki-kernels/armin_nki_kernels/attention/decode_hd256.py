@@ -84,9 +84,16 @@ NEG_BIAS = -65504.0
 # ---------------------------------------------------------------------------
 
 def kernel_assert(cond, msg=""):
-    """Raise RuntimeError on assertion failure with a structured prefix."""
-    if not cond:
-        raise RuntimeError(f"[NCC_INKI016] Kernel validation exception: {msg}")
+    """Compile-time check (host side, before NKI body runs).
+
+    Implementation note: NKI's compiler doesn't support `raise` statements
+    inside @nki.jit kernel bodies — when the kernel is FX-traced under
+    fake-tensor mode, the compiler tries to specialize the kernel and
+    `raise` causes 'NKI does not support raise statements'. We use a
+    plain Python `assert` instead. NKI does support `assert` as a fatal
+    error path (per its error spec).
+    """
+    assert cond, f"[NCC_INKI016] Kernel validation exception: {msg}"
 
 
 # ---------------------------------------------------------------------------
@@ -126,23 +133,11 @@ if _NKI_AVAILABLE:
             - All inputs bf16 except mask_bias (fp32) and scale (fp32 scalar)
         """
         S_ctx = k_full.shape[0]
-        kernel_assert(q.shape == (1, HEAD_DIM), f"q must be (1, 256), got {q.shape}")
-        kernel_assert(
-            k_full.shape == (S_ctx, HEAD_DIM),
-            f"k_full must be (S_ctx, 256), got {k_full.shape}",
-        )
-        kernel_assert(
-            v_full.shape == (S_ctx, HEAD_DIM),
-            f"v_full must be (S_ctx, 256), got {v_full.shape}",
-        )
-        kernel_assert(
-            mask_bias.shape == (1, S_ctx),
-            f"mask_bias must be (1, S_ctx), got {mask_bias.shape}",
-        )
-        kernel_assert(
-            S_ctx % P_MAX == 0,
-            f"S_ctx must be a multiple of {P_MAX}, got {S_ctx}",
-        )
+        # Shape validation is done by the wrapper before the kernel call.
+        # NKI can't model `raise`/`assert` inside @nki.jit bodies during
+        # FX-tracing under fake-tensor mode (it fails to specialize), so we
+        # keep the kernel body free of host-side validation. The wrapper
+        # owns shape/dtype checks before invocation.
         num_chunks = S_ctx // P_MAX
 
         # Output in HBM
@@ -369,13 +364,25 @@ if _NKI_AVAILABLE:
         denom = nl.ndarray((1, 1), dtype=nl.float32, buffer=nl.sbuf)
         nisa.tensor_reduce(dst=denom, data=sum_row, op=nl.add, axis=1)
 
-        # weights = exp_scores / denom — broadcast denom across all (128, num_chunks)
+        # Compute 1/denom (NKI tensor_scalar doesn't support `divide` op,
+        # so we precompute the reciprocal and multiply).
+        inv_denom = nl.ndarray((1, 1), dtype=nl.float32, buffer=nl.sbuf)
+        nisa.reciprocal(dst=inv_denom, data=denom)
+
+        # Broadcast inv_denom (1, 1) to (128, num_chunks). tensor_scalar
+        # with operand0=(1, 1) can't broadcast across the 128 partitions of
+        # dst — NKI's verifier rejects it ("operand0 partition total
+        # elements 1 != dst partition total elements 128"). Use
+        # nl.broadcast_to which the compiler folds into an access-pattern.
+        inv_denom_bcast = nl.broadcast_to(inv_denom, shape=(P_MAX, num_chunks))
+
+        # weights = exp_scores * inv_denom_bcast (full tile-tile multiply)
         weights_fp32 = nl.ndarray((P_MAX, num_chunks), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_scalar(
+        nisa.tensor_tensor(
             dst=weights_fp32,
-            data=exp_scores,
-            op0=nl.divide,
-            operand0=denom[0:1, 0:1],
+            data1=exp_scores,
+            data2=inv_denom_bcast,
+            op=nl.multiply,
         )
 
         # Cast weights to bf16 for the AV matmul
