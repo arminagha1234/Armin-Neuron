@@ -1,0 +1,706 @@
+{
+  "meta": {
+    "started": "2026-06-12T04:23:47.462641",
+    "host": "http://localhost:8000",
+    "machine": "trn2.48xlarge",
+    "price_usd_hr": 35.7608,
+    "workers_per_box": 4,
+    "tool": "customers/fal/path_c/serve/bench_full.py",
+    "ended": "2026-06-12T05:13:43.006663"
+  },
+  "ttfi": null,
+  "canonical": null,
+  "resolution_sweep": [
+    {
+      "height": 512,
+      "width": 512,
+      "label": "512x512",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 28,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 92636,
+      "warm": {
+        "n": 2,
+        "mean": 92626.0,
+        "median": 92626.0,
+        "p50": 92626.0,
+        "p95": 92948.2,
+        "p99": 92976.84,
+        "min": 92268,
+        "max": 92984,
+        "stdev": 506.288455329568
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 7794.0,
+        "vae_encode_ms": 31598.5,
+        "vae_decode_ms": 9895.5,
+        "postprocess_ms": 4.0,
+        "denoise_ms": 43334.0,
+        "total_ms": 92626.0
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 92636,
+          "client_ms": 92674,
+          "stages": {
+            "encoder_ms": 8099,
+            "vae_encode_ms": 31486,
+            "vae_decode_ms": 10198,
+            "postprocess_ms": 4,
+            "denoise_ms": 42849,
+            "total_ms": 92636
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 92268,
+          "client_ms": 92485,
+          "stages": {
+            "encoder_ms": 7996,
+            "vae_encode_ms": 31714,
+            "vae_decode_ms": 9728,
+            "postprocess_ms": 4,
+            "denoise_ms": 42826,
+            "total_ms": 92268
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 92984,
+          "client_ms": 93896,
+          "stages": {
+            "encoder_ms": 7592,
+            "vae_encode_ms": 31483,
+            "vae_decode_ms": 10063,
+            "postprocess_ms": 4,
+            "denoise_ms": 43842,
+            "total_ms": 92984
+          }
+        }
+      ]
+    },
+    {
+      "height": 768,
+      "width": 768,
+      "label": "768x768",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 768,
+        "width": 768,
+        "num_steps": 28,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 114546,
+      "warm": {
+        "n": 2,
+        "mean": 113869.5,
+        "median": 113869.5,
+        "p50": 113869.5,
+        "p95": 114001.35,
+        "p99": 114013.07,
+        "min": 113723,
+        "max": 114016,
+        "stdev": 207.18228688765842
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 7482.5,
+        "vae_encode_ms": 30793.5,
+        "vae_decode_ms": 25500.0,
+        "postprocess_ms": 10.0,
+        "denoise_ms": 50083.5,
+        "total_ms": 113869.5
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 114546,
+          "client_ms": 114946,
+          "stages": {
+            "encoder_ms": 8006,
+            "vae_encode_ms": 31238,
+            "vae_decode_ms": 25534,
+            "postprocess_ms": 10,
+            "denoise_ms": 49758,
+            "total_ms": 114546
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 114016,
+          "client_ms": 114614,
+          "stages": {
+            "encoder_ms": 7567,
+            "vae_encode_ms": 30647,
+            "vae_decode_ms": 25909,
+            "postprocess_ms": 10,
+            "denoise_ms": 49883,
+            "total_ms": 114016
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 113723,
+          "client_ms": 114024,
+          "stages": {
+            "encoder_ms": 7398,
+            "vae_encode_ms": 30940,
+            "vae_decode_ms": 25091,
+            "postprocess_ms": 10,
+            "denoise_ms": 50284,
+            "total_ms": 113723
+          }
+        }
+      ]
+    },
+    {
+      "height": 1024,
+      "width": 1024,
+      "label": "1024x1024",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 1024,
+        "width": 1024,
+        "num_steps": 28,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 434416,
+      "warm": {
+        "n": 2,
+        "mean": 149496.5,
+        "median": 149496.5,
+        "p50": 149496.5,
+        "p95": 149664.35,
+        "p99": 149679.27,
+        "min": 149310,
+        "max": 149683,
+        "stdev": 263.75082938258225
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 7385.0,
+        "vae_encode_ms": 30426.5,
+        "vae_decode_ms": 50614.0,
+        "postprocess_ms": 18.5,
+        "denoise_ms": 61052.5,
+        "total_ms": 149496.5
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 434416,
+          "client_ms": 435817,
+          "stages": {
+            "encoder_ms": 7526,
+            "vae_encode_ms": 30712,
+            "vae_decode_ms": 50762,
+            "postprocess_ms": 14,
+            "denoise_ms": 345402,
+            "total_ms": 434416
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 149683,
+          "client_ms": 151903,
+          "stages": {
+            "encoder_ms": 7430,
+            "vae_encode_ms": 29902,
+            "vae_decode_ms": 50861,
+            "postprocess_ms": 20,
+            "denoise_ms": 61470,
+            "total_ms": 149683
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 149310,
+          "client_ms": 149494,
+          "stages": {
+            "encoder_ms": 7340,
+            "vae_encode_ms": 30951,
+            "vae_decode_ms": 50367,
+            "postprocess_ms": 17,
+            "denoise_ms": 60635,
+            "total_ms": 149310
+          }
+        }
+      ]
+    }
+  ],
+  "step_sweep": [
+    {
+      "num_steps": 4,
+      "label": "4step",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 4,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 74424,
+      "warm": {
+        "n": 2,
+        "mean": 73830.5,
+        "median": 73830.5,
+        "p50": 73830.5,
+        "p95": 73995.65,
+        "p99": 74010.33,
+        "min": 73647,
+        "max": 74014,
+        "stdev": 259.50818869546293
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 7330.5,
+        "vae_encode_ms": 30777.0,
+        "vae_decode_ms": 9934.0,
+        "postprocess_ms": 4.0,
+        "denoise_ms": 25785.0,
+        "total_ms": 73830.5
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 74424,
+          "client_ms": 75637,
+          "stages": {
+            "encoder_ms": 8676,
+            "vae_encode_ms": 30108,
+            "vae_decode_ms": 10296,
+            "postprocess_ms": 4,
+            "denoise_ms": 25340,
+            "total_ms": 74424
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 73647,
+          "client_ms": 73845,
+          "stages": {
+            "encoder_ms": 7328,
+            "vae_encode_ms": 30803,
+            "vae_decode_ms": 9669,
+            "postprocess_ms": 4,
+            "denoise_ms": 25843,
+            "total_ms": 73647
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 74014,
+          "client_ms": 74895,
+          "stages": {
+            "encoder_ms": 7333,
+            "vae_encode_ms": 30751,
+            "vae_decode_ms": 10199,
+            "postprocess_ms": 4,
+            "denoise_ms": 25727,
+            "total_ms": 74014
+          }
+        }
+      ]
+    },
+    {
+      "num_steps": 8,
+      "label": "8step",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 8,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 76864,
+      "warm": {
+        "n": 2,
+        "mean": 76918.0,
+        "median": 76918.0,
+        "p50": 76918.0,
+        "p95": 77113.3,
+        "p99": 77130.66,
+        "min": 76701,
+        "max": 77135,
+        "stdev": 306.8843430349616
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 7418.0,
+        "vae_encode_ms": 31287.0,
+        "vae_decode_ms": 9829.5,
+        "postprocess_ms": 4.5,
+        "denoise_ms": 28379.0,
+        "total_ms": 76918.0
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 76864,
+          "client_ms": 77036,
+          "stages": {
+            "encoder_ms": 7332,
+            "vae_encode_ms": 31435,
+            "vae_decode_ms": 9952,
+            "postprocess_ms": 5,
+            "denoise_ms": 28140,
+            "total_ms": 76864
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 76701,
+          "client_ms": 77132,
+          "stages": {
+            "encoder_ms": 7334,
+            "vae_encode_ms": 31400,
+            "vae_decode_ms": 9760,
+            "postprocess_ms": 4,
+            "denoise_ms": 28203,
+            "total_ms": 76701
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 77135,
+          "client_ms": 77897,
+          "stages": {
+            "encoder_ms": 7502,
+            "vae_encode_ms": 31174,
+            "vae_decode_ms": 9899,
+            "postprocess_ms": 5,
+            "denoise_ms": 28555,
+            "total_ms": 77135
+          }
+        }
+      ]
+    },
+    {
+      "num_steps": 16,
+      "label": "16step",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 16,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 82587,
+      "warm": {
+        "n": 2,
+        "mean": 83223.0,
+        "median": 83223.0,
+        "p50": 83223.0,
+        "p95": 83308.5,
+        "p99": 83316.1,
+        "min": 83128,
+        "max": 83318,
+        "stdev": 134.35028842544403
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 7342.0,
+        "vae_encode_ms": 31343.5,
+        "vae_decode_ms": 9996.0,
+        "postprocess_ms": 4.5,
+        "denoise_ms": 34537.0,
+        "total_ms": 83223.0
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 82587,
+          "client_ms": 83253,
+          "stages": {
+            "encoder_ms": 7322,
+            "vae_encode_ms": 31550,
+            "vae_decode_ms": 9827,
+            "postprocess_ms": 5,
+            "denoise_ms": 33883,
+            "total_ms": 82587
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 83128,
+          "client_ms": 83728,
+          "stages": {
+            "encoder_ms": 7335,
+            "vae_encode_ms": 31179,
+            "vae_decode_ms": 9918,
+            "postprocess_ms": 5,
+            "denoise_ms": 34691,
+            "total_ms": 83128
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 83318,
+          "client_ms": 83796,
+          "stages": {
+            "encoder_ms": 7349,
+            "vae_encode_ms": 31508,
+            "vae_decode_ms": 10074,
+            "postprocess_ms": 4,
+            "denoise_ms": 34383,
+            "total_ms": 83318
+          }
+        }
+      ]
+    },
+    {
+      "num_steps": 28,
+      "label": "28step",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 28,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 90984,
+      "warm": {
+        "n": 2,
+        "mean": 91859.5,
+        "median": 91859.5,
+        "p50": 91859.5,
+        "p95": 92107.45,
+        "p99": 92129.49,
+        "min": 91584,
+        "max": 92135,
+        "stdev": 389.6158364337877
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 8069.5,
+        "vae_encode_ms": 31047.5,
+        "vae_decode_ms": 10016.0,
+        "postprocess_ms": 5.0,
+        "denoise_ms": 42721.5,
+        "total_ms": 91859.5
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 90984,
+          "client_ms": 91311,
+          "stages": {
+            "encoder_ms": 7327,
+            "vae_encode_ms": 30604,
+            "vae_decode_ms": 10138,
+            "postprocess_ms": 4,
+            "denoise_ms": 42911,
+            "total_ms": 90984
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 92135,
+          "client_ms": 92512,
+          "stages": {
+            "encoder_ms": 8771,
+            "vae_encode_ms": 30565,
+            "vae_decode_ms": 10090,
+            "postprocess_ms": 5,
+            "denoise_ms": 42704,
+            "total_ms": 92135
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 91584,
+          "client_ms": 92062,
+          "stages": {
+            "encoder_ms": 7368,
+            "vae_encode_ms": 31530,
+            "vae_decode_ms": 9942,
+            "postprocess_ms": 5,
+            "denoise_ms": 42739,
+            "total_ms": 91584
+          }
+        }
+      ]
+    }
+  ],
+  "multi_image_sweep": [
+    {
+      "num_images": 1,
+      "label": "1img",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 28,
+        "seed": 42,
+        "num_images": 1
+      },
+      "cold_ms": 91732,
+      "warm": {
+        "n": 2,
+        "mean": 92233.5,
+        "median": 92233.5,
+        "p50": 92233.5,
+        "p95": 92242.05,
+        "p99": 92242.81,
+        "min": 92224,
+        "max": 92243,
+        "stdev": 13.435028842544403
+      },
+      "warm_stages_ms": {
+        "encoder_ms": 8105.0,
+        "vae_encode_ms": 31440.5,
+        "vae_decode_ms": 9942.0,
+        "postprocess_ms": 4.5,
+        "denoise_ms": 42741.5,
+        "total_ms": 92233.5
+      },
+      "raw": [
+        {
+          "i": 0,
+          "ok": true,
+          "worker_ms": 91732,
+          "client_ms": 92057,
+          "stages": {
+            "encoder_ms": 7346,
+            "vae_encode_ms": 31288,
+            "vae_decode_ms": 9825,
+            "postprocess_ms": 4,
+            "denoise_ms": 43269,
+            "total_ms": 91732
+          }
+        },
+        {
+          "i": 1,
+          "ok": true,
+          "worker_ms": 92243,
+          "client_ms": 92846,
+          "stages": {
+            "encoder_ms": 7373,
+            "vae_encode_ms": 31968,
+            "vae_decode_ms": 10125,
+            "postprocess_ms": 5,
+            "denoise_ms": 42772,
+            "total_ms": 92243
+          }
+        },
+        {
+          "i": 2,
+          "ok": true,
+          "worker_ms": 92224,
+          "client_ms": 92675,
+          "stages": {
+            "encoder_ms": 8837,
+            "vae_encode_ms": 30913,
+            "vae_decode_ms": 9759,
+            "postprocess_ms": 4,
+            "denoise_ms": 42711,
+            "total_ms": 92224
+          }
+        }
+      ]
+    },
+    {
+      "num_images": 2,
+      "label": "2img",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 28,
+        "seed": 42,
+        "num_images": 2
+      },
+      "cold_ms": null,
+      "warm": {
+        "n": 0
+      },
+      "warm_stages_ms": {},
+      "raw": [
+        {
+          "i": 0,
+          "ok": false,
+          "error": "RemoteDisconnected: Remote end closed connection without response"
+        },
+        {
+          "i": 1,
+          "ok": false,
+          "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+        },
+        {
+          "i": 2,
+          "ok": false,
+          "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+        }
+      ]
+    },
+    {
+      "num_images": 3,
+      "label": "3img",
+      "config": {
+        "prompt": "show_from_a_different_camera_angle",
+        "height": 512,
+        "width": 512,
+        "num_steps": 28,
+        "seed": 42,
+        "num_images": 3
+      },
+      "cold_ms": null,
+      "warm": {
+        "n": 0
+      },
+      "warm_stages_ms": {},
+      "raw": [
+        {
+          "i": 0,
+          "ok": false,
+          "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+        },
+        {
+          "i": 1,
+          "ok": false,
+          "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+        },
+        {
+          "i": 2,
+          "ok": false,
+          "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+        }
+      ]
+    }
+  ],
+  "memory_pre_run": {
+    "raw_text": "instance-type: trn2.48xlarge\ninstance-id: i-02a51e30b3a33408d\nlogical-neuroncore-config: 2\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| NEURON | NEURON |  NEURON  | NEURON |   CONNECTED   |     PCI      |  PID   |      CPU      | NUMA | RUNTIME |\n| DEVICE | CORES  | CORE IDS | MEMORY |    DEVICES    |     BDF      |        |   AFFINITY    | NODE | VERSION |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 0      | 4      | 0-3      | 96 GB  | 12, 3, 4, 1   | 0000:cc:00.0 | 381768 | 48-95,144-191 | 1    | 2.32.19 |\n|        |        |          |        |               |              | 381769 |               |      | 2.32.19 |\n|        |        |          |        |               |              | 381770 |               |      | 2.32.19 |\n|        |        |          |        |               |              | 381771 |               |      | 2.32.19 |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 1      | 4      | 4-7      | 96 GB  | 13, 0, 5, 2   | 0000:b5:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 2      | 4      | 8-11     | 96 GB  | 14, 1, 6, 3   | 0000:b6:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 3      | 4      | 12-15    | 96 GB  | 15, 2, 7, 0   | 0000:cb:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 4      | 4      | 16-19    | 96 GB  | 0, 7, 8, 5    | 0000:6f:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 5      | 4      | 20-23    | 96 GB  | 1, 4, 9, 6    | 0000:58:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 6      | 4      | 24-27    | 96 GB  | 2, 5, 10, 7   | 0000:59:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 7      | 4      | 28-31    | 96 GB  | 3, 6, 11, 4   | 0000:6e:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 8      | 4      | 32-35    | 96 GB  | 4, 11, 12, 9  | 0000:9b:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 9      | 4      | 36-39    | 96 GB  | 5, 8, 13, 10  | 0000:84:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 10     | 4      | 40-43    | 96 GB  | 6, 9, 14, 11  | 0000:85:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 11     | 4      | 44-47    | 96 GB  | 7, 10, 15, 8  | 0000:9a:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 12     | 4      | 48-51    | 96 GB  | 8, 15, 0, 13  | 0000:f8:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 13     | 4      | 52-55    | 96 GB  | 9, 12, 1, 14  | 0000:e1:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 14     | 4      | 56-59    | 96 GB  | 10, 13, 2, 15 | 0000:e2:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 15     | 4      | 60-63    | 96 GB  | 11, 14, 3, 12 | 0000:f7:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n",
+    "note": "empty cores from neuron-ls --json-output: b'[\\n    {\\n        \"instance_type\": \"trn2.48xlarge\",\\n        \"instance_id\": \"i-02a51e30b3a33408d\",\\n        \"neuron_device\": 0,\\n        \"bdf\": \"0000:cc:00.0\",\\n        \"cpu_affinity\": \"48-95,144-191\",\\n    '"
+  },
+  "memory_post_run": {
+    "raw_text": "instance-type: trn2.48xlarge\ninstance-id: i-02a51e30b3a33408d\nlogical-neuroncore-config: 2\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| NEURON | NEURON |  NEURON  | NEURON |   CONNECTED   |     PCI      |  PID   |      CPU      | NUMA | RUNTIME |\n| DEVICE | CORES  | CORE IDS | MEMORY |    DEVICES    |     BDF      |        |   AFFINITY    | NODE | VERSION |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 0      | 4      | 0-3      | 96 GB  | 12, 3, 4, 1   | 0000:cc:00.0 | 381768 | 48-95,144-191 | 1    | 2.32.19 |\n|        |        |          |        |               |              | 381769 |               |      | 2.32.19 |\n|        |        |          |        |               |              | 381770 |               |      | 2.32.19 |\n|        |        |          |        |               |              | 381771 |               |      | 2.32.19 |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 1      | 4      | 4-7      | 96 GB  | 13, 0, 5, 2   | 0000:b5:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 2      | 4      | 8-11     | 96 GB  | 14, 1, 6, 3   | 0000:b6:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 3      | 4      | 12-15    | 96 GB  | 15, 2, 7, 0   | 0000:cb:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 4      | 4      | 16-19    | 96 GB  | 0, 7, 8, 5    | 0000:6f:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 5      | 4      | 20-23    | 96 GB  | 1, 4, 9, 6    | 0000:58:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 6      | 4      | 24-27    | 96 GB  | 2, 5, 10, 7   | 0000:59:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 7      | 4      | 28-31    | 96 GB  | 3, 6, 11, 4   | 0000:6e:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 8      | 4      | 32-35    | 96 GB  | 4, 11, 12, 9  | 0000:9b:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 9      | 4      | 36-39    | 96 GB  | 5, 8, 13, 10  | 0000:84:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 10     | 4      | 40-43    | 96 GB  | 6, 9, 14, 11  | 0000:85:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 11     | 4      | 44-47    | 96 GB  | 7, 10, 15, 8  | 0000:9a:00.0 | NA     | 0-47,96-143   | 0    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 12     | 4      | 48-51    | 96 GB  | 8, 15, 0, 13  | 0000:f8:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 13     | 4      | 52-55    | 96 GB  | 9, 12, 1, 14  | 0000:e1:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 14     | 4      | 56-59    | 96 GB  | 10, 13, 2, 15 | 0000:e2:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n| 15     | 4      | 60-63    | 96 GB  | 11, 14, 3, 12 | 0000:f7:00.0 | NA     | 48-95,144-191 | 1    | NA      |\n+--------+--------+----------+--------+---------------+--------------+--------+---------------+------+---------+\n",
+    "note": "empty cores from neuron-ls --json-output: b'[\\n    {\\n        \"instance_type\": \"trn2.48xlarge\",\\n        \"instance_id\": \"i-02a51e30b3a33408d\",\\n        \"neuron_device\": 0,\\n        \"bdf\": \"0000:cc:00.0\",\\n        \"cpu_affinity\": \"48-95,144-191\",\\n    '"
+  }
+}
