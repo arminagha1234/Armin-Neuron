@@ -253,10 +253,15 @@ def patch_rope_rank_slice(model, world_size: int, rank: int):
         # Bind loop vars via default args to avoid late-binding bug
         _orig = rope.forward
 
-        def _sliced(*args, _orig=_orig, _start=start, _end=end, **kwargs):
+        def _sliced(*args, _orig=_orig, _start=start, _end=end, _attr=attr, _rank=rank, **kwargs):
             out = _orig(*args, **kwargs)
             if isinstance(out, tuple) and len(out) == 2 and torch.is_tensor(out[0]):
                 cos, sin = out
+                if _rank == 0:
+                    print(f"[ltx2_tp_plan] {_attr} rope out cos.device={cos.device} "
+                          f"shape={tuple(cos.shape)} args_dev="
+                          f"{[a.device for a in args if torch.is_tensor(a)]}",
+                          flush=True)
                 # split rope: cos/sin are (B, H, T, D//2) — slice axis 1
                 if cos.dim() == 4:
                     cos = cos[:, _start:_end]
@@ -294,9 +299,11 @@ def _force_rope_device_neuron(model, rope_attrs, rank):
         _orig = mod.forward
 
         def _f(*args, _orig=_orig, **kwargs):
-            if "device" in kwargs and kwargs["device"] is not None:
-                if torch.device(kwargs["device"]).type == "meta":
-                    kwargs["device"] = neuron
+            # RoPE coords are positional-only — always compute on neuron
+            # regardless of the device arg propagated from internal
+            # (possibly meta) tensors.
+            if "device" in kwargs:
+                kwargs["device"] = neuron
             return _orig(*args, **kwargs)
         mod.forward = _f
 
@@ -306,15 +313,10 @@ def _force_rope_device_neuron(model, rope_attrs, rank):
                 _origp = getattr(mod, prep)
 
                 def _pf(*args, _origp=_origp, **kwargs):
-                    # device is the 5th positional for video, 3rd for audio
-                    new_args = []
-                    for a in args:
-                        if isinstance(a, torch.device) and a.type == "meta":
-                            new_args.append(neuron)
-                        else:
-                            new_args.append(a)
-                    if "device" in kwargs and kwargs["device"] is not None and \
-                       torch.device(kwargs["device"]).type == "meta":
+                    # Force any torch.device positional/kwarg to neuron
+                    new_args = [neuron if isinstance(a, torch.device) else a
+                                for a in args]
+                    if "device" in kwargs:
                         kwargs["device"] = neuron
                     return _origp(*new_args, **kwargs)
                 setattr(mod, prep, _pf)

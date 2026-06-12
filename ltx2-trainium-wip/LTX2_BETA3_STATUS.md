@@ -23,7 +23,54 @@ torch_neuronx 2.11.3.0.1278, `torch.device("neuron")`, TP=4 via
     (CPU) → into the denoising transformer's forward.
 11. ✅ Transformer-input CPU→Neuron wrapper catches all boundary tensors.
 
-## CURRENT blocker (2026-06-12, latest, pinpointed with NEURON_LAUNCH_BLOCKING=1)
+## CURRENT blocker (2026-06-12, deepest) — meta tensor from RoPE forward
+
+The run reaches the first denoising step and dies in
+`apply_interleaved_rotary_emb` (transformer_ltx2.py:189) doing
+`x.float() * cos`, where `cos` came from `self.rope(...)`. With
+`NEURON_LAUNCH_BLOCKING=1`, `0 params on meta after load`, so the
+meta tensor is created inside the RoPE forward at runtime.
+
+Fixes attempted this session (none resolved it):
+1. Slice all 4 RoPE modules' cos/sin by rank ✅ (correct, still needed)
+2. Sharding-aware attn.heads patch (only patch when to_q is a sharded
+   DTensor) ✅
+3. Force RoPE `device=` arg → neuron always (`_force_rope_device_neuron`)
+   — did NOT resolve; the meta tensor is created inside the RoPE forward
+   regardless of the device arg, likely from a `torch.arange` /
+   `meshgrid` / `linspace` that inherits a meta default, OR from a
+   coords tensor built before our wrapper sees it.
+
+### What to do next (needs interactive tracing, not run-fix-rerun)
+
+1. Run a **single-process** repro with `pdb` / explicit prints INSIDE
+   `LTX2AudioVideoRotaryPosEmbed.prepare_video_coords` and `.forward`
+   to print the device of: `grid_f/h/w`, `latent_coords`, `freqs`,
+   `cos_freqs`. Find the first tensor that's on `meta`.
+2. The Qwen3.5 reference (`armin_neuron_clone/qwen3.5-4b-trainium/src/
+   qwen3_5/model_bf16.py`, `Qwen3_5RotaryEmbedding`) shows the robust
+   pattern: build `inv_freq` once as a `register_buffer(persistent=False)`
+   on a CONCRETE device, and have `forward(position_ids, device, dtype)`
+   materialize freqs on the passed device. LTX-2's RoPE is functional
+   (no buffer) so the equivalent fix is to ensure every `torch.*` call
+   inside `prepare_video_coords`/`forward` passes an explicit non-meta
+   `device=`.
+3. Simplest likely-correct fix: monkeypatch
+   `LTX2AudioVideoRotaryPosEmbed.prepare_video_coords` and
+   `.prepare_audio_coords` to ignore the incoming device entirely and
+   hardcode `torch.device("neuron")` for ALL internal tensor creation
+   (the coords are positional-only; safe to pin to neuron). Our current
+   `_force_rope_device_neuron` only overrides the `device` ARG — it does
+   NOT reach inside the method body where `torch.arange(..., device=device)`
+   uses the (now-correct) arg, so check whether the method even reads the
+   arg we pass, or computes device from a captured tensor.
+
+The diagnostic print added to `_sliced` (cos.device) did not appear in
+the crash log — confirming the failing cos was produced at the rope
+CALL site (transformer line 1456) and consumed at line 189; the next
+trace should print at BOTH sites.
+
+## PRIOR blocker (pinpointed) — meta during RoPE (same family)
 
 The run reaches the FIRST denoising step and fails inside RoPE:
 
