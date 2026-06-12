@@ -265,6 +265,89 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
         return self
 
     # ------------------------------------------------------------------
+    # Encode prompt — text encoder stays on CPU
+    # ------------------------------------------------------------------
+    def _get_gemma_prompt_embeds(
+        self,
+        prompt,
+        num_videos_per_prompt: int = 1,
+        max_sequence_length: int = 1024,
+        scale_factor: int = 8,
+        device=None,
+        dtype=None,
+    ):
+        """Same as base but runs the Gemma3 encoder on CPU.
+
+        The base class moves the tokenized input_ids to `self.device`
+        (which is the Neuron device) and then calls `self.text_encoder`.
+        Since our text_encoder is on CPU (we kept it there for v1),
+        the dtype/device mismatch causes
+        `RuntimeError: Expected self.dtype() == dst.dtype()`.
+
+        Fix: feed the encoder CPU tensors, then move the output
+        embeddings to the requested device. Mirrors NeuronWanPipeline's
+        _encode_prompt() pattern (see neuron_wan_pipeline.py).
+        """
+        import torch as _torch
+
+        target_device = device or self.device
+        target_dtype = dtype or self.text_encoder.dtype
+
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+
+        if getattr(self, "tokenizer", None) is not None:
+            self.tokenizer.padding_side = "left"
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        prompt = [p.strip() for p in prompt]
+        text_inputs = self.tokenizer(
+            prompt,
+            padding="max_length",
+            max_length=max_sequence_length,
+            truncation=True,
+            add_special_tokens=True,
+            return_tensors="pt",
+        )
+        # Keep on CPU — the encoder is on CPU.
+        text_input_ids = text_inputs.input_ids
+        prompt_attention_mask = text_inputs.attention_mask
+
+        with _torch.no_grad():
+            text_encoder_outputs = self.text_encoder(
+                input_ids=text_input_ids,
+                attention_mask=prompt_attention_mask,
+                output_hidden_states=True,
+            )
+        text_encoder_hidden_states = text_encoder_outputs.hidden_states
+        text_encoder_hidden_states = _torch.stack(text_encoder_hidden_states, dim=-1)
+        sequence_lengths = prompt_attention_mask.sum(dim=-1)
+
+        # _pack_text_embeds is base-class, expects to be called with
+        # device kwarg — pass CPU so the packing happens on CPU, then
+        # we move the final embeds to the target device below.
+        prompt_embeds = self._pack_text_embeds(
+            text_encoder_hidden_states,
+            sequence_lengths,
+            device=_torch.device("cpu"),
+            padding_side=self.tokenizer.padding_side,
+            scale_factor=scale_factor,
+        )
+
+        # Two-step: cast dtype on CPU first (cheap; small tensor), then
+        # move to Neuron. Avoids the combined .to(device, dtype) trap.
+        prompt_embeds = prompt_embeds.to(dtype=target_dtype)
+        prompt_embeds = prompt_embeds.to(device=target_device)
+
+        # The base class `forward()` does `(1 - prompt_attention_mask.to(prompt_embeds.dtype)) * -1e6`.
+        # That `.to(...)` on a Neuron tensor with int→fp cast is itself
+        # the dtype trap. Pre-cast the mask to the prompt-embeds dtype
+        # on CPU so the base class's .to() becomes a no-op.
+        attention_mask = prompt_attention_mask.to(dtype=target_dtype)
+        attention_mask = attention_mask.to(device=target_device)
+        return prompt_embeds, attention_mask
+
+    # ------------------------------------------------------------------
     # CPU-resident encoder / VAE wiring
     # ------------------------------------------------------------------
     # The base class's encode_prompt() and the denoising loop use
