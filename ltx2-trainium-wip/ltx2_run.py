@@ -126,6 +126,11 @@ def build_transformer(rank, world_size, local_rank, device, dtype):
     if rank == 0:
         print(f"[ltx2_run] weights loaded in {time.time() - t0:.1f}s", flush=True)
 
+    # 6a. Safety net: materialize ANY param still on meta by looking it
+    # up in the checkpoint by full dotted name. Catches norm_q/norm_k and
+    # any other param the module-walk resolver missed post-parallelize.
+    _materialize_remaining_meta(model, weights_dir, rank, world_size, device, dtype)
+
     # 6b. NOW install adaptive QK norm (AFTER weights load, so the loader
     # could materialize norm_q/norm_k.weight before we wrap them).
     install_adaptive_qk_norm(model, world_size=world_size, rank=rank)
@@ -137,6 +142,61 @@ def build_transformer(rank, world_size, local_rank, device, dtype):
 
     model.eval()
     return model, cfg
+
+
+def _materialize_remaining_meta(model, weights_dir, rank, world_size, device, dtype):
+    """Fill any param still on `meta` with its checkpoint tensor.
+
+    norm_q/norm_k (rms_norm_across_heads) are full inner_dim and NOT in
+    the TP plan, so they're replicated — load the full tensor on every
+    rank. Other meta params get the same treatment.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    from safetensors import safe_open as _safe_open
+
+    idx_path = _Path(weights_dir) / "diffusion_pytorch_model.safetensors.index.json"
+    weight_map = _json.loads(idx_path.read_text())["weight_map"]
+
+    # Group remaining meta params by shard file
+    meta_params = {}
+    for name, p in model.named_parameters():
+        if getattr(p, "is_meta", False):
+            meta_params[name] = p
+    if rank == 0:
+        print(f"[ltx2_run] materialize pass: {len(meta_params)} params still on meta",
+              flush=True)
+    if not meta_params:
+        return
+
+    by_shard = {}
+    for name in meta_params:
+        sf = weight_map.get(name)
+        if sf is None:
+            continue
+        by_shard.setdefault(sf, []).append(name)
+
+    filled = 0
+    for shard_file, names in by_shard.items():
+        with _safe_open(_Path(weights_dir) / shard_file, framework="pt", device="cpu") as f:
+            for name in names:
+                full = f.get_tensor(name).to(dtype)
+                # Walk to parent module and set the leaf
+                parts = name.split(".")
+                *parent_path, leaf = parts
+                mod = model
+                ok = True
+                for p in parent_path:
+                    if not hasattr(mod, p):
+                        ok = False
+                        break
+                    mod = getattr(mod, p)
+                if not ok:
+                    continue
+                setattr(mod, leaf, torch.nn.Parameter(full.to(device), requires_grad=False))
+                filled += 1
+    if rank == 0:
+        print(f"[ltx2_run] materialize pass: filled {filled} meta params", flush=True)
 
 
 def main():

@@ -111,18 +111,46 @@ def apply_tp_fixes(model, world_size: int, rank: int):
     new_video_heads = N_HEADS_FULL // world_size
     new_audio_heads = AUDIO_HEADS // world_size
 
+    # Detect actual sharding per attention by inspecting to_q output dim.
+    # ColwiseParallel converts to_q.weight to a DTensor sharded on dim 0;
+    # its local shape[0] will be full/world_size. Only patch attn.heads
+    # for modules whose to_q actually sharded — otherwise unflatten gives
+    # the wrong head_dim.
+    def _is_sharded(linear):
+        if linear is None or not hasattr(linear, "weight"):
+            return False
+        w = linear.weight
+        # DTensor: check placements for a Shard
+        try:
+            from torch.distributed.tensor import DTensor
+            if isinstance(w, DTensor):
+                return any(getattr(p, "is_shard", lambda: False)() or
+                           p.__class__.__name__ == "Shard" for p in w.placements)
+        except ImportError:
+            pass
+        # Fallback: compare local out dim to expected full
+        return False
+
     for layer in range(N_LAYERS):
         block = model.transformer_blocks[layer]
-        # Video attention modules — full inner_dim sharded
         for attn_name in ("attn1", "attn2", "audio_to_video_attn"):
             attn = getattr(block, attn_name, None)
-            if attn is not None and hasattr(attn, "heads"):
+            if attn is not None and hasattr(attn, "heads") and _is_sharded(getattr(attn, "to_q", None)):
                 attn.heads = new_video_heads
-        # Audio attention modules
-        for attn_name in ("audio_attn1", "audio_attn2"):
+        for attn_name in ("audio_attn1", "audio_attn2", "video_to_audio_attn"):
             attn = getattr(block, attn_name, None)
-            if attn is not None and hasattr(attn, "heads"):
+            if attn is not None and hasattr(attn, "heads") and _is_sharded(getattr(attn, "to_q", None)):
                 attn.heads = new_audio_heads
+
+    # Diagnostic: report sharding state of block 0's attentions
+    if rank == 0:
+        b0 = model.transformer_blocks[0]
+        for an in ("attn1", "attn2", "audio_attn1", "audio_attn2",
+                   "audio_to_video_attn", "video_to_audio_attn"):
+            a = getattr(b0, an, None)
+            if a is not None:
+                print(f"[ltx2_tp_plan] block0.{an}.to_q sharded={_is_sharded(getattr(a,'to_q',None))} heads={getattr(a,'heads',None)}",
+                      flush=True)
 
     if rank == 0:
         print(f"[ltx2_tp_plan] patched attn.heads: video={new_video_heads}, "
@@ -239,5 +267,62 @@ def patch_rope_rank_slice(model, world_size: int, rank: int):
         rope.forward = _sliced
         patched.append(f"{attr}(heads {start}:{end})")
 
+    # Also force every RoPE's coord-prep + forward to use the neuron
+    # device, since the meta tensor originates from a `device=` arg that
+    # propagated from a meta-built internal tensor (e.g. audio latents).
+    _force_rope_device_neuron(model, rope_attrs, rank)
+
     if rank == 0:
         print(f"[ltx2_tp_plan] patched RoPE rank slices: {patched}", flush=True)
+
+
+def _force_rope_device_neuron(model, rope_attrs, rank):
+    """Force RoPE coord-prep and forward to compute on the neuron device.
+
+    The LTX-2 transformer calls e.g.
+        self.rope(video_coords, device=hidden_states.device)
+    If that device is `meta` (because an internally-created latent stayed
+    on meta), the cos/sin come out on meta and the downstream multiply
+    against the (neuron) query fails. We override the `device` kwarg /
+    positional to always be neuron.
+    """
+    neuron = torch.device("neuron")
+
+    def _wrap(mod):
+        if not hasattr(mod, "forward"):
+            return
+        _orig = mod.forward
+
+        def _f(*args, _orig=_orig, **kwargs):
+            if "device" in kwargs and kwargs["device"] is not None:
+                if torch.device(kwargs["device"]).type == "meta":
+                    kwargs["device"] = neuron
+            return _orig(*args, **kwargs)
+        mod.forward = _f
+
+        # also wrap prepare_video_coords / prepare_audio_coords
+        for prep in ("prepare_video_coords", "prepare_audio_coords"):
+            if hasattr(mod, prep):
+                _origp = getattr(mod, prep)
+
+                def _pf(*args, _origp=_origp, **kwargs):
+                    # device is the 5th positional for video, 3rd for audio
+                    new_args = []
+                    for a in args:
+                        if isinstance(a, torch.device) and a.type == "meta":
+                            new_args.append(neuron)
+                        else:
+                            new_args.append(a)
+                    if "device" in kwargs and kwargs["device"] is not None and \
+                       torch.device(kwargs["device"]).type == "meta":
+                        kwargs["device"] = neuron
+                    return _origp(*new_args, **kwargs)
+                setattr(mod, prep, _pf)
+
+    for attr in rope_attrs:
+        rope = getattr(model, attr, None)
+        if rope is not None:
+            _wrap(rope)
+    if rank == 0:
+        print(f"[ltx2_tp_plan] forced RoPE coord device → neuron on "
+              f"meta-device calls", flush=True)

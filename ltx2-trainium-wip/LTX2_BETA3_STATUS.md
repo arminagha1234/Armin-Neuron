@@ -23,7 +23,59 @@ torch_neuronx 2.11.3.0.1278, `torch.device("neuron")`, TP=4 via
     (CPU) → into the denoising transformer's forward.
 11. ✅ Transformer-input CPU→Neuron wrapper catches all boundary tensors.
 
-## CURRENT blocker (2026-06-12, latest) — norm_q/norm_k not materialized
+## CURRENT blocker (2026-06-12, latest, pinpointed with NEURON_LAUNCH_BLOCKING=1)
+
+The run reaches the FIRST denoising step and fails inside RoPE:
+
+```
+transformer_ltx2.py:1593 forward (transformer)
+  → :646 forward (block)
+    → :406 forward (LTX2Attention attn1)
+      → :189 apply_interleaved_rotary_emb
+        → ltx2_tp_plan.py:171 (_sliced RoPE wrapper)
+RuntimeError: Tensor on device meta is not on the expected device neuron:0!
+  (during  x.float() * cos  — cos/sin from self.rope is on META)
+```
+
+`NEURON_LAUNCH_BLOCKING=1` confirms: **0 params remain on meta after
+load**, so the meta tensor is created at RUNTIME inside the RoPE
+forward. `self.rope(video_coords, device=hidden_states.device)` is
+producing cos/sin on `meta`. That means `hidden_states.device` (or the
+coords device) is `meta` at the point RoPE is computed — some tensor
+fed into the transformer block is still on meta even though all
+PARAMETERS are materialized.
+
+Earlier shape-mismatch blocker (audio head_dim) was a symptom of the
+same: when cos came through on the wrong device/shape the broadcast
+check fired first.
+
+### Next debugging step (precise)
+
+Add device prints inside the LTX-2 forward right before line 1456:
+```python
+print("hs.device", hidden_states.device, "ahs.device", audio_hidden_states.device)
+video_coords = self.rope.prepare_video_coords(..., hidden_states.device, ...)
+```
+to find which of `hidden_states` / `audio_hidden_states` is on meta.
+Most likely `audio_hidden_states` — the pipeline may initialize the
+audio latent stream as a zeros tensor whose device derives from a
+meta-built submodule. Fix: force `audio_hidden_states` (and any
+internally-created latent) to neuron at the top of the transformer
+wrapper, OR patch `prepare_latents`/the audio-init to use the real
+device.
+
+The `_NeuronTransformerWrapper._move_to_neuron` catches top-level
+forward kwargs but NOT tensors the transformer creates internally —
+that's the gap.
+
+## Sharding-aware heads patch (added this session)
+
+`apply_tp_fixes` now only patches `attn.heads` for attention modules
+whose `to_q` actually became a sharded DTensor (`_is_sharded()` check),
+so we don't mis-patch heads on any attention that didn't shard. Also
+added a block-0 sharding diagnostic print.
+
+## PRIOR blocker (resolved) — norm_q/norm_k meta materialization
 
 After fixing the RMSNorm shape issue (adaptive QK norm) and the
 operation order (load weights → then install adaptive norm), the run
