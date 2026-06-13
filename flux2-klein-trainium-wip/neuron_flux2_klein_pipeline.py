@@ -28,9 +28,9 @@ Reference templates:
 PIPELINE_REGISTRY at the bottom enables auto-registration when this file is
 dropped into the vllm_omni_neuron plugin's diffusion/models/ folder.
 
-Customer driver: external image-to-image zoom LoRA on top of FLUX.2-klein 4B base.
-The LoRA is a transformer-only adapter (~76 MB safetensors) that fuses into the
-DiT before serving.
+Customer driver: fal/flux-2-klein-4B-zoom-lora — image-to-image editing LoRA
+on top of FLUX.2-klein 4B base. The LoRA is a transformer-only adapter
+(~76 MB safetensors) that fuses into the DiT before serving.
 """
 from __future__ import annotations
 
@@ -190,6 +190,116 @@ def _patch_timesteps_to_cpu(transformer):
         logger.debug("[neuron-flux2] class-level patch skipped: %s", _e)
 
 
+def _patch_get_1d_rotary_pos_embed_real():
+    """Module-level monkey-patch of `diffusers.models.embeddings.get_1d_rotary_pos_embed`.
+
+    Real-arithmetic RoPE — equivalent to the original
+    `get_1d_rotary_pos_embed(use_real=False)` but never builds a complex
+    tensor and never calls `torch.polar`. Replaces the function on the
+    diffusers module so that even if Dynamo inlines the bytecode of
+    `Flux2PosEmbed.forward` (which calls this function), the inlined
+    path picks up our real-only implementation.
+
+    The original returns a complex tensor (S, dim/2) when
+    `use_real=False`, then `Flux2PosEmbed.forward` does
+    `.real` / `.imag` to split into cos/sin halves. We emulate that
+    contract with a small shim object exposing `.real` / `.imag`
+    attributes on real tensors, so the downstream `.real` / `.imag`
+    accesses still work without ever constructing a complex tensor.
+
+    Reference: `flux2_get_1d_rope` in
+    `NeuronAutoFixerAIM/.../flux2-dit-on-nxdi-neuron/neuron_flux2_dit.py`
+    (CPU rank-3 proven equivalent to torch complex rotation).
+    """
+    try:
+        import diffusers.models.embeddings as _emb_mod
+    except Exception as _e:
+        logger.debug("[neuron-flux2] diffusers.models.embeddings import skipped: %s", _e)
+        return
+
+    if getattr(_emb_mod, "_neuron_flux2_g1d_real_patched", False):
+        return  # already patched
+
+    class _ComplexShim:
+        """Mimics the .real / .imag attributes of a complex tensor on
+        real fp32 tensors. The downstream caller does
+            cos_out.append(freqs_cis.real)
+            sin_out.append(freqs_cis.imag)
+        which works on this shim exactly as on a complex tensor."""
+        __slots__ = ("real", "imag")
+        def __init__(self, real, imag):
+            self.real = real
+            self.imag = imag
+
+    def _real_get_1d_rotary_pos_embed(
+        dim,
+        pos,
+        theta=10000.0,
+        use_real=False,
+        linear_factor=1.0,
+        ntk_factor=1.0,
+        repeat_interleave_real=True,
+        freqs_dtype=torch.float32,
+    ):
+        # Float64 isn't supported on Neuron — force fp32 even if caller asks.
+        if freqs_dtype is None or freqs_dtype == torch.float64:
+            freqs_dtype = torch.float32
+
+        # Build everything on CPU then move back to caller's device.
+        # XLA's complex/float64 lowerings are broken on Neuron — staying
+        # off the device is the entire point of this patch.
+        orig_device = pos.device if torch.is_tensor(pos) else None
+        pos_cpu = pos.detach().to(device="cpu") if torch.is_tensor(pos) else pos
+
+        theta = theta * ntk_factor
+        freqs = (
+            1.0
+            / (theta ** (torch.arange(0, dim, 2, dtype=torch.float64) / dim))
+            / linear_factor
+        )  # [dim/2]
+
+        if torch.is_tensor(pos_cpu):
+            freqs = torch.outer(pos_cpu.double(), freqs)  # [S, dim/2]
+        else:
+            freqs = torch.outer(torch.tensor(pos_cpu, dtype=torch.float64), freqs)
+
+        cos = freqs.cos()
+        sin = freqs.sin()
+
+        if use_real:
+            # diffusers returns (cos, sin) of shape (S, dim) when
+            # repeat_interleave_real=True else (S, dim) via cat.
+            if repeat_interleave_real:
+                cos_full = cos.repeat_interleave(2, dim=-1).to(freqs_dtype)
+                sin_full = sin.repeat_interleave(2, dim=-1).to(freqs_dtype)
+            else:
+                cos_full = torch.cat([cos, cos], dim=-1).to(freqs_dtype)
+                sin_full = torch.cat([sin, sin], dim=-1).to(freqs_dtype)
+            if orig_device is not None:
+                cos_full = cos_full.to(device=orig_device)
+                sin_full = sin_full.to(device=orig_device)
+            return cos_full, sin_full
+
+        # use_real=False: original returns a complex tensor of shape
+        # (S, dim/2). The downstream Flux2PosEmbed.forward does
+        # `.real` / `.imag` on it. We hand back a shim with real cos/sin
+        # halves of shape (S, dim/2) so `.real` / `.imag` accesses still
+        # work and never touch torch.polar / complex64.
+        cos_half = cos.to(freqs_dtype)
+        sin_half = sin.to(freqs_dtype)
+        if orig_device is not None:
+            cos_half = cos_half.to(device=orig_device)
+            sin_half = sin_half.to(device=orig_device)
+        return _ComplexShim(cos_half, sin_half)
+
+    _emb_mod.get_1d_rotary_pos_embed = _real_get_1d_rotary_pos_embed
+    _emb_mod._neuron_flux2_g1d_real_patched = True
+    logger.info(
+        "[neuron-flux2] module-level diffusers.get_1d_rotary_pos_embed "
+        "patched (real-arithmetic, no torch.polar)"
+    )
+
+
 def _patch_pos_embed_to_cpu(transformer):
     """Force RoPE freq computation on CPU + float32.
 
@@ -238,28 +348,31 @@ def _patch_pos_embed_to_cpu(transformer):
             self.theta = theta
 
         def forward(self, ids):
+            # NEURON: real-arithmetic RoPE, inline math (do NOT call
+            # diffusers.get_1d_rotary_pos_embed because Dynamo inlines
+            # its bytecode which has torch.polar inside).
+            # Equivalent to use_real=False then .real/.imag, but never
+            # builds a complex tensor in any frame Dynamo can trace.
             orig_device = ids.device
-            ids_cpu = ids.to(device="cpu")
+            ids_cpu = ids.to(device="cpu") if str(orig_device) != "cpu" else ids
             cos_out = []
             sin_out = []
             pos = ids_cpu.float()
-            with torch.no_grad():
-                for i in range(len(self.axes_dim)):
-                    # use_real=False produces a complex tensor of shape
-                    # (seq, dim/2). The original Flux2PosEmbed splits
-                    # it into .real and .imag for concat — we replicate
-                    # that exactly so downstream rope sees the same
-                    # shapes. The complex compute happens on CPU so
-                    # `torch.polar` never enters the FX graph.
-                    freqs_cis = get_1d_rotary_pos_embed(
-                        self.axes_dim[i],
-                        pos[..., i],
-                        theta=self.theta,
-                        use_real=False,
-                        freqs_dtype=torch.float32,
-                    )
-                    cos_out.append(freqs_cis.real.contiguous())
-                    sin_out.append(freqs_cis.imag.contiguous())
+            for i in range(len(self.axes_dim)):
+                dim = self.axes_dim[i]
+                # freqs[k] = 1 / theta^(2k/dim) for k in [0, dim/2)
+                # Note: do this at fp32 (Neuron has no fp64). The
+                # original diffusers does it at fp64 then casts; the
+                # numerical loss at fp32 is negligible for RoPE freqs
+                # at dim<=128 (see NeuronAutoFixerAIM CPU rank-3 test).
+                inv_freq = 1.0 / (
+                    self.theta
+                    ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim)
+                )
+                # outer over pos[..., i] and inv_freq → (..., dim/2)
+                angles = torch.outer(pos[..., i].float(), inv_freq)
+                cos_out.append(angles.cos().to(torch.float32).contiguous())
+                sin_out.append(angles.sin().to(torch.float32).contiguous())
             freqs_cos = torch.cat(cos_out, dim=-1).to(device=orig_device)
             freqs_sin = torch.cat(sin_out, dim=-1).to(device=orig_device)
             return freqs_cos, freqs_sin
@@ -475,6 +588,14 @@ class NeuronFlux2KleinPipeline(Flux2KleinPipeline):
         # "mps" — but Neuron device.type is "xla", so it falls through
         # to float64 which Neuron rejects.
         _patch_pos_embed_to_cpu(inner_transformer)
+        # Module-level real-arithmetic patch on
+        # diffusers.get_1d_rotary_pos_embed — eliminates torch.polar
+        # (complex64) from the FX graph by replacing the math at the
+        # bytecode level. Belt #4: even if Dynamo inlines the original
+        # Flux2PosEmbed.forward bytecode (which calls the patched
+        # function), the inlined path emits real cos/sin instead of
+        # torch.polar.
+        _patch_get_1d_rotary_pos_embed_real()
         self.transformer = _NeuronTransformerWrapper(inner_transformer)
 
         # ---- Image processor + scale factor ----
