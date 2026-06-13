@@ -24,7 +24,7 @@ autoresearch GPT (50M params)
 Everything runs on a single Trainium2 logical core (2 physical NeuronCores
 under LNC=2).
 
-## The Neuron Port (7 changes)
+## The Neuron Port (8 changes)
 
 The porting script (`src/port_to_neuron.py`) documents all changes.
 Summary:
@@ -45,6 +45,10 @@ Summary:
 7. **`DEVICE_BATCH_SIZE` reduced 128 → 16** — single Neuron core has
    ~24 GB user budget; 50M model + activations at seq=2048 fit with
    batch=16.
+8. **Per-block compilation for DEPTH>8** — full-model compile exceeds
+   the 10M instruction limit at larger depths. Compile each attn+mlp
+   block separately. This is the same pattern vLLM-Neuron uses for
+   large models.
 
 ## Reproduction
 

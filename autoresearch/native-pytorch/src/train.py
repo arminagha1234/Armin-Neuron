@@ -451,8 +451,8 @@ WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
-DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 16   # per-device batch size (reduced for Neuron single-core)
+DEPTH = 16              # number of transformer layers (increased for MFU test)
+DEVICE_BATCH_SIZE = 16   # per-device batch size (keep small with deeper model)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -512,8 +512,13 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-# NEURON PORT: compile with neuron backend
-model = torch.compile(model, backend="neuron", dynamic=False)
+# NEURON PORT: compile each transformer block separately (avoids 10M instruction limit)
+# Full-model compile produces graphs too large for neuronx-cc when depth>8.
+# Per-block compile keeps each NEFF small and composable.
+for i, block in enumerate(model.transformer.h):
+    block.attn = torch.compile(block.attn, backend="neuron", dynamic=False)
+    block.mlp = torch.compile(block.mlp, backend="neuron", dynamic=False)
+print(f"Compiled {len(model.transformer.h)} blocks (attn + mlp each)")
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
