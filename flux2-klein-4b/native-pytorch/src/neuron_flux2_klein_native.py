@@ -1,9 +1,9 @@
 """FLUX.2-klein 4B image-to-image — native PyTorch + Beta 3.
 
 A subclass of `diffusers.Flux2KleinPipeline` that keeps the text
-encoder + VAE on CPU and runs only the DiT on Neuron. Lifted from
-`customers/fal/flux2_klein/neuron_flux2_klein_pipeline.py` (the
-vllm-omni version), with vllm-omni-specific scaffolding removed:
+encoder + VAE on CPU and runs only the DiT on Neuron. Lifted from a
+parallel vllm-omni implementation, with vllm-omni-specific scaffolding
+removed:
 
   * No `od_config`, `weights_sources`, `setup_diffusion_pipeline_profiler`
   * No `forward(req)` — uses the parent's standard `__call__`
