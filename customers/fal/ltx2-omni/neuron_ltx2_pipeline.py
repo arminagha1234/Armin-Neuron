@@ -190,6 +190,12 @@ class _NeuronTransformerWrapper(nn.Module):
         self.inner = inner
         # Cached target device — lazily resolved on first forward().
         self._target_device = None
+        # Cache for precomputed RoPE outputs (filled in by
+        # `_precompute_rope_outputs` on first forward). Keyed on
+        # video_coords/audio_coords shape so cache invalidates if the
+        # video shape changes between requests. Same shape = no
+        # recompute, just constant tensor reuse.
+        self._rope_cache: dict = {}
 
     # --- attribute proxies (the base pipeline reads these) -----------
     @property
@@ -226,6 +232,92 @@ class _NeuronTransformerWrapper(nn.Module):
         self._target_device = get_local_device()
         return self._target_device
 
+    def _precompute_rope_outputs(self, video_coords, audio_coords, target_device):
+        """Compute the four RoPE outputs on CPU and cache as Neuron tensors.
+
+        The transformer's `forward()` calls four rope modules INSIDE the
+        compile boundary:
+            self.rope(video_coords, device=hidden_states.device)
+            self.audio_rope(audio_coords, device=audio_hidden_states.device)
+            self.cross_attn_rope(video_coords[:, 0:1, :], device=hs.device)
+            self.cross_attn_audio_rope(audio_coords[:, 0:1, :], device=ahs.device)
+
+        Each rope's `forward()` does
+            torch.linspace(..., device=device)  # device = hidden_states.device
+            ...stack/repeat ops...
+            grid = stack.to(device)             # ← FAILS
+
+        Inside the FX trace, `hidden_states.device` resolves to a virtual
+        XLA device and the final `.to(neuron:N)` becomes an
+        `unimplemented _copy_from xla:0neuron:N` error. The rope outputs
+        are deterministic functions of (coords, batch_size, seq_len) —
+        same every diffusion step — so we precompute them on CPU here
+        (eagerly, outside compile), move to the Neuron device, and
+        monkey-patch the four rope modules to return these precomputed
+        tensors. The compiled graph then just sees "constant tensor"
+        values for cos/sin and never tries to build them.
+        """
+        import torch as _torch
+
+        cache = self._rope_cache
+        v_key = tuple(int(x) for x in video_coords.shape)
+        a_key = tuple(int(x) for x in audio_coords.shape)
+        if cache.get("video_key") == v_key and cache.get("audio_key") == a_key:
+            return  # already cached
+
+        v_cpu = video_coords.detach().to(device="cpu")
+        a_cpu = audio_coords.detach().to(device="cpu")
+        cpu = _torch.device("cpu")
+
+        with _torch.no_grad():
+            video_rope = self.inner.rope(v_cpu, device=cpu)
+            audio_rope = self.inner.audio_rope(a_cpu, device=cpu)
+            video_xrope = self.inner.cross_attn_rope(v_cpu[:, 0:1, :], device=cpu)
+            audio_xrope = self.inner.cross_attn_audio_rope(
+                a_cpu[:, 0:1, :], device=cpu)
+
+        def _to_target(rope_out):
+            # rope_out is (cos, sin)
+            cos, sin = rope_out
+            return (
+                cos.contiguous().to(device=target_device),
+                sin.contiguous().to(device=target_device),
+            )
+
+        cache["video"] = _to_target(video_rope)
+        cache["audio"] = _to_target(audio_rope)
+        cache["video_x"] = _to_target(video_xrope)
+        cache["audio_x"] = _to_target(audio_xrope)
+        cache["video_key"] = v_key
+        cache["audio_key"] = a_key
+
+        # Monkey-patch the four rope forwards to return cached values.
+        # We patch on the INSTANCE (not the class) so we don't pollute
+        # other LTX2 models in this process.
+        wrapper_self = self
+
+        def _make_const_forward(cache_key):
+            def _forward(coords, device=None):
+                return wrapper_self._rope_cache[cache_key]
+            return _forward
+
+        # Each rope is called with positional `coords` and either
+        # positional or keyword `device`. We accept both via *args,
+        # **kwargs to be safe.
+        def _make_robust_forward(cache_key):
+            def _forward(*args, **kwargs):
+                return wrapper_self._rope_cache[cache_key]
+            return _forward
+
+        # Only install the forward overrides ONCE — installing every
+        # call would compound the bound-method dispatch.
+        if not cache.get("installed", False):
+            self.inner.rope.forward = _make_robust_forward("video")
+            self.inner.audio_rope.forward = _make_robust_forward("audio")
+            self.inner.cross_attn_rope.forward = _make_robust_forward("video_x")
+            self.inner.cross_attn_audio_rope.forward = _make_robust_forward("audio_x")
+            cache["installed"] = True
+
     def forward(self, *args, **kwargs):
         target = self._resolve_target_device()
         # Coords come from the pipeline as CPU tensors (we patched the
@@ -236,13 +328,18 @@ class _NeuronTransformerWrapper(nn.Module):
             if v is not None and hasattr(v, "to") and v.device != target:
                 kwargs[key] = v.contiguous().to(device=target)
 
-        # Hidden states should already be on Neuron (they come from
-        # latents which we forced to bf16+Neuron in prepare_latents),
-        # but ensure contiguity for the in-place reshapes downstream.
-        for key in ("hidden_states", "audio_hidden_states"):
-            v = kwargs.get(key)
-            if v is not None and hasattr(v, "is_contiguous") and not v.is_contiguous():
-                kwargs[key] = v.contiguous()
+        # Precompute the four RoPE outputs on CPU and cache them on the
+        # wrapper. The cache only invalidates on shape changes (which
+        # don't happen across diffusion steps for a fixed video shape),
+        # so this is a no-op after the first step. See docstring above.
+        v = kwargs.get("video_coords")
+        a = kwargs.get("audio_coords")
+        if v is not None and a is not None:
+            # Use the original CPU coords for hashing/computing. The
+            # `kwargs[key]` were already moved to Neuron above; rebuild
+            # CPU views for the rope precompute. The coords are tiny
+            # and contiguous, so .cpu() round-trip is safe.
+            self._precompute_rope_outputs(v.cpu(), a.cpu(), target)
 
         return self.inner(*args, **kwargs)
 
@@ -766,8 +863,82 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
             kwargs["generator"] = torch.Generator(device="cpu").manual_seed(g.initial_seed())
         return super().prepare_audio_latents(*args, **kwargs)
 
+    @staticmethod
+    def _pack_audio_latents(
+        latents: torch.Tensor,
+        patch_size: int | None = None,
+        patch_size_t: int | None = None,
+    ) -> torch.Tensor:
+        """Override base `_pack_audio_latents` to do the transpose/permute
+        + flatten on CPU.
+
+        The base implementation does:
+            latents = latents.transpose(1, 2).flatten(2, 3)        # else branch
+            latents = latents.permute(0,2,4,1,3,5).flatten(3,5).flatten(1,2)  # patched branch
+
+        Both transpose and permute produce non-contiguous tensors. On
+        Neuron, neither `.contiguous()` nor `.flatten()` on a
+        non-contiguous device tensor work — the lazy backend rejects
+        with "Expected self.is_contiguous() to be true". The fix is to
+        do this layout reorganization on CPU and move the result back.
+        Latents are small (audio mel-spec latent), so this round-trip
+        is cheap. See ltx2-omni-DECISIONS.md.
+        """
+        orig_device = latents.device
+        latents = latents.to(device="cpu")
+        if patch_size is not None and patch_size_t is not None:
+            batch_size, num_channels, latent_length, latent_mel_bins = latents.shape
+            post_patch_latent_length = latent_length // patch_size_t
+            post_patch_mel_bins = latent_mel_bins // patch_size
+            latents = latents.reshape(
+                batch_size, -1, post_patch_latent_length, patch_size_t,
+                post_patch_mel_bins, patch_size,
+            )
+            latents = latents.permute(0, 2, 4, 1, 3, 5).contiguous()
+            latents = latents.flatten(3, 5).flatten(1, 2)
+        else:
+            latents = latents.transpose(1, 2).contiguous()
+            latents = latents.flatten(2, 3)
+        return latents.to(device=orig_device)
+
+    @staticmethod
+    def _pack_video_latents(
+        latents: torch.Tensor,
+        patch_size: int = 1,
+        patch_size_t: int = 1,
+    ) -> torch.Tensor:
+        """Override base `_pack_video_latents` to do the layout ops on CPU.
+
+        Same Neuron contiguity issue as `_pack_audio_latents`. The base
+        does a permute+flatten that produces a non-contiguous source
+        for `flatten`, which Neuron's lazy backend rejects. Round-trip
+        via CPU; latents are small.
+        """
+        orig_device = latents.device
+        latents = latents.to(device="cpu")
+        batch_size, num_channels, num_frames, height, width = latents.shape
+        post_patch_num_frames = num_frames // patch_size_t
+        post_patch_height = height // patch_size
+        post_patch_width = width // patch_size
+        latents = latents.reshape(
+            batch_size, -1,
+            post_patch_num_frames, patch_size_t,
+            post_patch_height, patch_size,
+            post_patch_width, patch_size,
+        )
+        latents = latents.permute(0, 2, 4, 6, 1, 3, 5, 7).contiguous()
+        latents = latents.flatten(4, 7).flatten(1, 3)
+        return latents.to(device=orig_device)
+
     def compile_transformer(self, *args, **kwargs):
-        """Compile the DiT transformer for Neuron."""
+        """Compile the DiT transformer for Neuron.
+
+        With the rope precompute pattern in `_NeuronTransformerWrapper.
+        forward()`, the inner DiT no longer creates fresh tensors via
+        device-dependent ops (`torch.linspace(device=hidden_states.
+        device)`) inside the compile boundary. So `fullgraph=True` is
+        safe again.
+        """
         t_kwargs = copy.deepcopy(kwargs)
         t_kwargs["fullgraph"] = True
         t_options = t_kwargs.setdefault("options", {})
@@ -782,6 +953,35 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
         if self.transformer is not None:
             self.compile_transformer(*args, **kwargs)
         return self
+
+    def forward(self, req):
+        """Skip the engine's dummy_run, otherwise pass to the base
+        pipeline's forward.
+
+        The vLLM-Omni `DiffusionEngine.__init__` always calls
+        `_dummy_run()` even when the pipeline sets `skip_warmup=True`.
+        That dummy run sends a request with `prompt="dummy run"` and
+        `request_ids=["dummy_req_id"]`, which our pipeline can identify
+        and short-circuit. The base LTX2 pipeline's forward expects
+        coords/encoders to be fully wired; running it in dummy_run mode
+        with our CPU-resident encoders + Neuron transformer surfaces
+        the "non-contiguous Device Tensor" error from
+        `vllm_neuron.compile.backend` (some intermediate tensor produced
+        by the dummy-shaped pipeline doesn't make the contiguity
+        contract). Skipping the dummy run avoids that — real requests
+        from `omni.generate(...)` go through the same path but with
+        properly-shaped inputs and the issue doesn't reproduce. The
+        Wan and Helios Neuron pipelines do the same.
+
+        For real requests, delegate to the base `LTX2Pipeline.forward`.
+        """
+        from vllm_omni.diffusion.models.wan2_2.pipeline_wan2_2 import DiffusionOutput
+        if getattr(self, "skip_warmup", False) and getattr(req, "request_ids", None) == ["dummy_req_id"]:
+            prompt = req.prompts[0] if isinstance(req.prompts[0], str) else req.prompts[0].get("prompt")
+            if prompt == "dummy run":
+                logger.info("Skipping warmup request on Neuron LTX-2 pipeline")
+                return DiffusionOutput(output=None)
+        return super().forward(req)
 
     def load_weights(self, weights=None):
         """Forward the framework's (name, tensor) iterable to the inner DiT.
