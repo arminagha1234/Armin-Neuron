@@ -110,10 +110,31 @@ NOT Neuron core saturation. In production serving with pre-loaded
 models and pipelined text encoding, expect the 4-core per-step number
 (~2100 ms) to hold at higher concurrency. That projects to:
 
+### Steady-state validated (single-core, 5 consecutive images, no reload)
+
+Ran 5 consecutive images on a single warm core (model loaded once,
+NEFF cached). Per-image times:
+
+| Image | Total time | Per-step |
+|---:|---:|---:|
+| 0 | 56.6 s | 2022 ms |
+| 1 | 57.6 s | 2056 ms |
+| 2 | 56.6 s | 2020 ms |
+| 3 | 56.6 s | 2023 ms |
+| 4 | 56.6 s | ~2020 ms |
+| **Average** | **56.8 s** | **2030 ms** |
+
+**The tqdm shows ~1.04 it/s** = 960 ms for the actual NEFF execution.
+The remaining ~1070 ms/step is CPU overhead (text encoder, scheduler
+step, CPU↔Neuron boundary). This confirms the optimization target:
+reduce CPU overhead via pipelining in the serving wrapper.
+
+### Production projections
+
 ```
-Production steady-state estimate (32 cores, 2100 ms/step):
-= 28 steps × 2.1s = 58.8s per image, 32 in parallel
-$/image = 58.8 × ($21.50/3600) / 32 = $0.0110/image (1.5× H100)
+Production steady-state estimate (32 cores, 2030 ms/step, pre-loaded):
+= 28 steps × 2.03s = 56.8s per image, 32 in parallel
+$/image = 56.8 × ($21.50/3600) / 32 = $0.0106/image (1.45× H100)
 ```
 
 With 12-step generation (quality permitting):
