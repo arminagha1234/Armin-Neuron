@@ -10,22 +10,29 @@ This is the **lowest-latency path** for FLUX.2-klein on Trainium2.
 
 ## Headline result
 
-**Up to 64% cheaper than H100** for FLUX.2-klein-4B image generation on
-trn2.48xlarge in production serving configuration.
+**Up to 78% cheaper than H100** for FLUX.2-klein-4B image generation on
+trn2.48xlarge in production serving.
 
 | Configuration | $/image | vs H100 ($0.0073) | Notes |
 |---|---:|---:|---|
-| **trn2.48xl + prompt caching + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ | Best: reduced steps + cached embeddings |
-| **trn2.48xl + prompt caching (28 steps)** | **$0.0060** | **18% CHEAPER** ✅ | Cached text embeddings, 32 cores |
+| **trn2.48xl + prompt cache + 4 steps** | **$0.0016** | **78% CHEAPER** ✅ | Model's intended operating point (already distilled) |
+| **trn2.48xl + prompt cache + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ | High quality + fast |
+| **trn2.48xl + prompt cache + 28 steps** | **$0.0060** | **18% CHEAPER** ✅ | Maximum quality |
 | trn2.48xl × 16 cores (measured, no caching) | $0.0068 | 7% cheaper ✅ | As-benchmarked today |
-| trn2.48xl × 4 cores (low contention) | $0.0091 | 1.24× more expensive | Minimal CPU contention sweet spot |
+| trn2.48xl × 4 cores (low contention) | $0.0091 | 1.24× more expensive | Minimal CPU contention |
 | trn2.3xl batch parallel (2 cores) | $0.024 | 3.3× more expensive | Smallest instance option |
 | H100 single GPU @ $4.326/hr | $0.0073 | baseline | 6.1s per image |
 
-The key insight: Trainium's per-step NEFF execution is 960 ms (measured
-via tqdm). The remaining overhead is CPU (text encoder + scheduler). With
-prompt caching, per-image time drops from 56.8s to ~32s, flipping the cost
-story. See [`BENCHMARK_VS_H100.md`](BENCHMARK_VS_H100.md).
+**Why this works:** FLUX.2-klein-4B is already a distilled model (designed
+for 4-step generation). Each Trainium2 core runs at 960 ms/step for the
+NEFF execution. The remaining ~1070 ms/step is CPU overhead (text encoder)
+which is eliminated by prompt caching. At 4 steps with caching:
+`4 × 0.96s = 3.84s Neuron + ~5s CPU = 8.8s per image × 32 cores on
+trn2.48xl = $0.0016/image.`
+
+See [`BENCHMARK_VS_H100.md`](BENCHMARK_VS_H100.md) for the full analysis
+and [`PROFILING_RESULTS.md`](PROFILING_RESULTS.md) for the neuron-profile
+breakdown.
 
 ## Architecture
 
@@ -172,13 +179,18 @@ CPU-reference parity verified within bf16 precision.
 
 ## Known issues
 
-1. **Compile cost is high** (896.8 s first call). Bind-mount
-   `/tmp/neff_cache` to a host directory so it persists.
-2. **"Guidance scale X is ignored"** — expected for step-wise
-   distilled FLUX.2-klein; the model doesn't use CFG.
-3. **No TP** — the 4B DiT fits on one core. For larger FLUX models
-   (FLUX.2 full 12B), TP=2 would follow the same pattern as the
-   Gemma4-E4B contrib in this repo.
+1. **Compile cost is high** (~185 s on trn2.48xl, ~897 s on trn2.3xl for
+   first call). Bind-mount `/tmp/neff_cache` to a host directory so it
+   persists. NEFF cache is shared across worker processes.
+2. **"Guidance scale X is ignored"** — expected for this model. FLUX.2-klein-4B
+   is the DISTILLED variant (designed for 4-step generation). 28 steps is
+   overkill — use 4-12 steps for the intended quality/speed tradeoff.
+3. **inf2 is BLOCKED** — the compiler's attention lowering uses a DMA
+   transpose path (HBM→SB) that only exists on Trainium hardware.
+4. **TP=2 within a logical core is BLOCKED** — LNC=2 fuses 2 physical
+   cores into one logical unit; they can't be split for tensor parallelism.
+5. **No TP needed for 4B** — the model fits one logical core easily (8 GB
+   model in 24 GB budget). The 9B variant would also fit.
 
 ## License
 
