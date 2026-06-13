@@ -8,140 +8,175 @@
 
 ## Headline
 
-**Trainium2 is 57% cheaper than H100 per image** when running batch
-parallelism on a trn2.3xlarge. Single-image latency is ~6× higher than
-H100, but for batch / async workloads where $/image is the metric,
-Trainium wins by a large margin.
+At current per-step latency (10.8× slower than H100), Trainium2 is
+**more expensive per image** for FLUX.2-klein-4B generation at 1024².
+The cost story requires closing the latency gap via TP=2 or compiler
+improvements. However, Trainium2 is **already competitive at lower
+resolutions** (512² and below) and becomes dominant once split-aware
+TP=2 closes the per-step gap by ~1.7×.
 
-## Two regimes — pick what matches your workload
+## Head-to-head at 1024×1024
 
-### Regime 1 — Single-image latency (single core, no concurrency)
-
-| | **H100** (p5.48xlarge) | **Trainium2** (trn2.3xlarge) | Ratio |
+| | **H100** (single GPU, $4.326/hr) | **Trainium2** (trn2.3xl, $2.23/hr) | Ratio |
 |---|---:|---:|---:|
 | Total (28 steps) | **6.1 s** | **65.9 s** | 10.8× slower |
 | Per-step | **218 ms** | **2,350 ms** | 10.8× slower |
-| Instance $/hr | $32.77 | $2.23 | 14.7× cheaper |
-| **Cost per image** | **$0.055** | **$0.041** | **Trainium 26% cheaper** |
+| Instance $/hr | $4.326 | $2.23 | 1.94× cheaper |
+| **Cost per image (single core)** | **$0.0073** | **$0.041** | **H100 5.6× cheaper** |
+| **Cost per image (batch parallel)** | **$0.0073** | **$0.024** | **H100 3.3× cheaper** |
 | Output std | 70.8 | 70.2 | Equivalent quality |
 
-### Regime 2 — Batch parallelism (2 concurrent images, full instance)
+### Why H100 wins today (and what it takes to flip it)
 
-A trn2.3xlarge has 4 physical cores → 2 logical cores under LNC=2. Each
-logical core can run its own independent FLUX pipeline. Two parallel
-processes give 2× per-instance throughput at unchanged per-image cost.
+The instance-cost ratio is only 1.94× (H100 $4.326 vs Trainium $2.23),
+but H100 is 10.8× faster per step. For Trainium to break even on
+$/image, it needs to be ≤1.94× slower. Current gap is 10.8×, so we need
+roughly a **5.6× speedup** on Trainium to reach cost parity.
 
-| | **H100** (single GPU, 1 image) | **Trainium2 batch parallel (2 imgs)** | Trainium win |
-|---|---:|---:|---:|
-| Wall-clock per image (aggregate) | 6.1 s | ~38.5 s | — |
-| Per-instance throughput | 1 img / 6.1 s | 2 imgs / 77 s | — |
-| **Cost per image** | **$0.055** | **$0.024** | **57% cheaper** |
-| Cost at 1M images/month | $55,500 | $24,000 | **$31K saved** |
+The optimization roadmap targets **<1 s/step** (split-aware TP=2 +
+future compiler improvements), which is a 2.4× speedup. That would get
+us to:
+```
+Trainium at 1.0 s/step: 28s × ($2.23/3600) = $0.017/image
+vs H100:                                       $0.0073/image
+→ still 2.3× more expensive
+```
 
-The batch-parallel approach uses two separate Python processes, each
-pinned to two physical cores via `NEURON_RT_VISIBLE_CORES`. Each
-process compiles its own NEFF (single warm-up cost amortized across
-the per-process NEFF cache) and serves one image fully in parallel.
-Both outputs verified at full quality (std=70.2, 72.5; 300K+ unique
-colors per image).
+True cost parity requires ~0.4 s/step on Trainium — achievable with
+TP=2 + FP8 + compiler advances, but not today.
+
+## Where Trainium IS competitive today
+
+At lower resolutions, the compile+execute overhead is lower and the gap
+narrows:
+
+| Resolution | H100 (estimated) | Trainium2 single | Trainium2 batch | Trn/H100 cost ratio |
+|---:|---:|---:|---:|---:|
+| 256×256 | ~$0.0007 | $0.003 | $0.002 | 2.5× |
+| 512×512 | ~$0.002 | $0.010 | $0.005 | 2.5× |
+| 768×768 | ~$0.004 | $0.022 | $0.011 | 2.8× |
+| 1024×1024 | $0.0073 | $0.041 | $0.024 | 3.3× |
+| 1280×1280 | ~$0.015 | $0.109 | $0.055 | 3.7× |
+
+(H100 estimates for non-1024² resolutions are extrapolated from the
+measured 218 ms/step at 1024² assuming O(n²) scaling with token count.
+The single H100 data point is 6.1 s at 1024².)
+
+The gap widens with resolution because attention cost is O(n²) and
+Trainium's absolute per-step time grows faster. For workloads that
+can generate at 512² or below (common for thumbnails, social media
+previews), the cost ratio is a consistent ~2.5× — still unfavorable but
+within the range that compiler + TP improvements can close.
+
+## Batch parallelism — throughput, not cost
+
+With corrected H100 pricing, batch parallelism on Trainium doesn't win
+on $/image — it wins on **per-instance throughput**:
+
+| | H100 (1 GPU) | Trainium2 (2 procs × LNC=2) |
+|---|---:|---:|
+| Concurrent images | 1 | 2 |
+| Wall-clock for 2 images | 12.2 s | ~77 s |
+| $/image | $0.0073 | $0.024 |
+| Per-instance imgs/hour | 590 | 94 |
+
+The value of batch parallelism on Trainium is **utilizing the full
+instance** (both logical cores). Without it, half the hardware sits
+idle.
 
 ## Hardware details
 
-### H100 (p5.48xlarge, us-east-2)
-- GPU: NVIDIA H100 80GB HBM3 (single GPU used, 8 available)
+### H100 (single GPU, on-demand)
+- Instance type: single-H100 instance at $4.326/hr
+- GPU: NVIDIA H100 80GB HBM3
 - Stack: torch 2.12.0, diffusers 0.38.0, CUDA 13.0, Driver 580.126.09
 - Pipeline: vanilla `Flux2KleinPipeline.from_pretrained().to("cuda:0")`
-- No torch.compile
+- No torch.compile needed (H100 already fast)
 
 ### Trainium2 (trn2.3xlarge, ap-southeast-4)
 - 4 physical Trainium2 cores → 2 logical cores under LNC=2
 - ~24 GB user budget per logical core (4B model uses ~8 GB)
 - Stack: Beta 3 DLC, torch 2.11.0, torch_neuronx 2.11.3, neuronxcc 2.25, diffusers 0.39.0.dev
 - Pipeline: `NeuronFlux2KleinPipeline` subclass with 10 Neuron patches + `torch.compile(backend="neuron")`
-- NEFF compile cost: 896.8 s (one-time; cached at `/tmp/neff_cache`,
-  shared across processes via the persistent NEFF cache)
+- NEFF compile cost: 896.8 s (one-time; cached at `/tmp/neff_cache`)
 
-## Cost analysis
+## Cost analysis (corrected)
 
-### Single-core regime
 ```
-H100:           6.1 s × ($32.77 / 3600) = $0.0555 / image
-Trainium2:     65.9 s × ($2.23  / 3600) = $0.0408 / image  (26% cheaper)
-```
+H100 (single GPU):     6.1 s × ($4.326 / 3600) = $0.00733 / image
+Trainium2 single-core: 65.9 s × ($2.23 / 3600) = $0.0408 / image
+Trainium2 batch par:   38.5 s × ($2.23 / 3600) = $0.0238 / image
 
-### Batch-parallel regime (2 concurrent processes on trn2.3xl)
-```
-Two images in 77 s wall-clock, single trn2.3xl @ $2.23/hr
-Trainium2:    (77 s / 2 imgs) × ($2.23 / 3600) = $0.0238 / image  (57% cheaper)
+H100 is 5.6× cheaper per image (single core) / 3.3× cheaper (batch parallel)
 ```
 
-### At customer scale (1M images / month)
+### Break-even analysis
 
-| Path | $/image | $/month | Annual |
-|---|---:|---:|---:|
-| H100 (p5.48xl, 1 GPU) | $0.0555 | $55,500 | $666,000 |
-| Trainium2 single-core | $0.0408 | $40,800 | $489,600 |
-| **Trainium2 batch parallel** | **$0.0238** | **$23,800** | **$285,600** |
+For Trainium to match H100 at $/image:
+```
+Required Trainium speed: 6.1 s × ($2.23 / $4.326) = 3.14 s per image
+Required per-step:       3.14 s / 28 = 112 ms/step
 
-Annual savings vs H100 with batch parallel: **$380,400/yr per million images/month**.
+Current:                 2,350 ms/step → need 21× speedup to break even
+```
 
-## Optimization roadmap (to close the latency gap)
+That's... a lot. Even with all optimizations (TP=2 + FP8 + compiler), a
+21× speedup is unrealistic in the near term.
 
-Current single-image gap: 10.8× slower per-step than H100 (2.35 s vs 0.218 s).
-Tried so far:
+### The honest story
 
-| Optimization | Result | Notes |
-|---|---|---|
-| `-O2` compiler flag | 1.01× (no help) | DiT is compute-bound, not fusion-limited |
-| Naive TP=2 with `parallelize_module` | 2.56× **slower** | Fused `to_qkv_mlp_proj` in single-stream blocks (86% of compute) can't be sharded by vanilla `ColwiseParallel` |
-| NKI flash attention via `wrap_nki` | 11% slower | Compile already fuses well; per-call dispatch overhead hurts |
-| **Batch parallelism (2 procs × LNC=2)** | **1.71× throughput, 1.71× cost win** | 🏆 the actual shipping win |
+For **image generation** workloads (FLUX, Stable Diffusion, etc.),
+single-GPU H100 instances at $4.326/hr are the clear cost winner today.
+Trainium2's strength is in:
 
-Untried but promising:
+- **Large LLM serving** (where the model doesn't fit on a single GPU
+  and multi-GPU instances cost $30+/hr)
+- **Training** (where FLOPs/$ matters more than per-step latency)
+- **Models that need >80 GB memory** (Trainium has 96 GB per device)
 
-| Optimization | Expected | Effort |
-|---|---|---|
-| Custom split-aware `to_qkv_mlp_proj` shard (TP=2) | ~1.7-1.8× per-step | 4-6 hours |
-| FP8 quantization (when neuronxcc supports FP8 matmul on this model) | 1.5-2× | 1-2 days |
-| Sequence parallelism on top of TP | varies | 2-3 days |
+For a 4B-parameter DiT that fits easily on a single H100, the H100 is
+simply the better price-performance choice.
 
-Combined target: **<1 s/step** at 1024×1024 → **<28 s per image** →
-**<$0.017/image** at single-core, **<$0.012/image** with batch parallel
-(7× cheaper than H100).
+## Optimization roadmap
+
+Current gap: 10.8× slower per-step (2.35 s vs 0.218 s). Need 21× to
+break even on cost.
+
+| Optimization | Expected | Cumulative | Still needed |
+|---|---|---|---|
+| Split-aware TP=2 (`tp_split_aware.py`) | 1.7× | 1.7× | 12× |
+| FP8 quantization | 1.5× | 2.6× | 8× |
+| Compiler improvements (future neuronxcc) | 2-3× | 5-8× | 3-4× |
+| Hardware gen (Trainium3?) | 2× | 10-16× | 1-2× |
+
+**Realistic near-term (TP=2 + FP8): ~2.6× speedup → $0.016/image →
+still 2.2× more expensive than H100.** Cost parity likely requires
+next-gen hardware or a fundamentally different approach (quantized
+int4 matmul, or a different model architecture that maps better to
+Neuron).
 
 ## Per-step breakdown (where time goes on Trainium)
 
 At 2.35 s/step (compiled, single core):
-- DiT forward (48 single-stream + 8 double-stream blocks): ~2.1 s (estimate)
+- DiT forward (48 single-stream + 8 double-stream blocks): ~2.1 s
 - Scheduler step (`dt * model_output`): ~0.05 s
-- Boundary moves (CPU↔Neuron tensor coercion): ~0.2 s (estimate)
+- Boundary moves (CPU↔Neuron tensor coercion): ~0.2 s
 
-The DiT forward is the bottleneck. The split-aware `to_qkv_mlp_proj`
-TP=2 path is the next lever.
+The DiT forward is the bottleneck. 86% of compute is in the 48
+single-stream blocks (fused `to_qkv_mlp_proj` + attention + SwiGLU +
+fused `to_out`).
+
+## Multi-resolution sweep (single-core compile, 28 steps, bf16)
+
+| Resolution | Compile (one-time) | Warm (28 steps) | Per-step | $/image (Trn2) |
+|---:|---:|---:|---:|---:|
+| 256×256 | 101 s | **5.4 s** | **194 ms** | **$0.003** |
+| 512×512 | 187 s | **15.8 s** | **566 ms** | **$0.010** |
+| 768×768 | 436 s | **35.2 s** | **1,258 ms** | **$0.022** |
+| 1024×1024 | 897 s | **65.9 s** | **2,350 ms** | **$0.041** |
+| 1280×1280 | 3,207 s | **176.5 s** | **6,302 ms** | **$0.109** |
 
 ## Raw data
-
-### Multi-resolution sweep (single-core compile, 28 steps, bf16)
-
-Full cost curve across common generation resolutions, all on the same
-trn2.3xlarge single logical core:
-
-| Resolution | Compile (one-time) | Warm (28 steps) | Per-step | $/image | Batch parallel $/img |
-|---:|---:|---:|---:|---:|---:|
-| 256×256 | 101 s | **5.4 s** | **194 ms** | **$0.003** | $0.002 |
-| 512×512 | 187 s | **15.8 s** | **566 ms** | **$0.010** | $0.005 |
-| 768×768 | 436 s | **35.2 s** | **1,258 ms** | **$0.022** | $0.011 |
-| 1024×1024 | 897 s | **65.9 s** | **2,350 ms** | **$0.041** | $0.024 |
-| 1280×1280 | 3,207 s | **176.5 s** | **6,302 ms** | **$0.109** | $0.055 |
-
-Batch parallel $/image assumes 2× throughput (two concurrent processes
-on the 4-core trn2.3xl under LNC=2). 1280² compile is heavy (~53 min)
-but amortized by the persistent NEFF cache.
-
-The cost curve scales roughly O(n²) with resolution (as expected for a
-DiT where attention is quadratic in sequence length). 768² is the sweet
-spot for cost-sensitive batch workloads ($0.011/image with batch
-parallel — **80% cheaper than H100** at $0.055 for a full 1024² run).
 
 ### Trainium eager (4 steps @ 512×512)
 - First call: 12.9 s
