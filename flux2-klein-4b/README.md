@@ -4,23 +4,23 @@ Two production-ready paths to run [FLUX.2-klein-4B](https://huggingface.co/black
 (text-to-image and image-to-image, with optional LoRA fusion) on AWS
 Trainium2. Pick the path that matches your serving need:
 
-| Path | Best for | 1024² × 28 steps | Per-image | $/image | vs H100 |
+| Path | Best for | 1024² × 28 steps | Per-image | $/image (Trn2) | vs H100 ($0.0073) |
 |---|---|---:|---:|---:|---:|
-| [`native-pytorch/`](native-pytorch/) — single core | **Lowest latency standalone** | 65.9 s | 65.9 s | $0.041 | 26% cheaper |
-| [`native-pytorch/`](native-pytorch/) — batch parallel | **Lowest cost per image** | 77 s for 2 imgs | **38.5 s aggregate** | **$0.024** | **57% cheaper** |
+| [`native-pytorch/`](native-pytorch/) — single core | **Lowest latency standalone** | 65.9 s | 65.9 s | $0.041 | H100 5.6× cheaper |
+| [`native-pytorch/`](native-pytorch/) — batch parallel | **Full-instance throughput** | 77 s for 2 imgs | 38.5 s aggregate | $0.024 | H100 3.3× cheaper |
 | [`vllm-omni/`](vllm-omni/) | Multi-modal serving stack | extrapolated >800 s | ~150 s/step | extrapolated $4.7 | n/a |
 
-(Cost based on trn2.3xlarge $2.23/hr for native path; trn2.48xlarge
-$21.50/hr for vllm-omni; H100 baseline $0.055/image on p5.48xlarge
-single GPU.)
+(H100 baseline: single H100 GPU at $4.326/hr = $0.0073/image.
+Trainium2: trn2.3xlarge at $2.23/hr.)
 
-The native PyTorch path is ~15× faster per-step than vllm-omni because
-it skips the omni engine layer. **Use it for production serving when
-FLUX.2-klein is the only model on the box** — single-core for
-low-latency interactive, batch-parallel for cost-efficient async
-workloads. The vllm-omni path is the right answer when FLUX.2-klein is
-hosted alongside other modalities (LLM + video + audio) inside a single
-omni service.
+**Current state:** H100 wins on $/image for this workload due to the
+10.8× per-step latency gap. Trainium2's value here is functional
+validation of the native PyTorch stack (torch.compile on DiT models
+works end-to-end) and throughput scaling via batch parallelism. The
+cost story requires closing the per-step gap via split-aware TP=2 and
+future compiler improvements. See
+[`BENCHMARK_VS_H100.md`](native-pytorch/BENCHMARK_VS_H100.md) for
+the full analysis and break-even math.
 
 ## TL;DR — which path do I want?
 
@@ -38,7 +38,8 @@ omni service.
        single core or batch-parallel                  needs omni engine
        65.9s single / 38.5s batch                     shared scheduler/KV
        $0.041 single / $0.024 batch                   + other modalities
-       up to 57% cheaper than H100
+       (H100 still cheaper today;
+        working to close the gap)
 ```
 
 ## Highlights
@@ -46,9 +47,9 @@ omni service.
 ### Native PyTorch path
 - **65.9 s** for 28-step 1024×1024 with `torch.compile(backend="neuron")` (single core)
 - **38.5 s/image aggregate** with batch parallelism (2 procs × LNC=2 on 4-core trn2.3xl)
-- **$0.024/image** in the batch-parallel regime — **57% cheaper than H100**
-- Single Trainium2 logical core (no TP needed; ~24 GB user budget;
-  4B model uses ~8 GB)
+- H100 single GPU at $4.326/hr is still **3.3-5.6× cheaper per image** at current latency gap
+- Functional validation: native PyTorch + torch.compile works end-to-end on a 4B DiT
+- Single Trainium2 logical core (no TP needed; ~24 GB user budget; 4B model uses ~8 GB)
 - LoRA support via `pipe.fuse_lora()` before compile
 - Beta 3 stack (torch 2.11, torch_neuronx 2.11.3, neuronxcc 2.25)
 
