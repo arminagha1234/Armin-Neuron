@@ -60,6 +60,22 @@ encoder + VAE move to Neuron, the per-clip cost drops ~3×. To close the
 remaining gap to H100 you'd need transformer-side compile speedups (NKI
 flash attention, fused MLP — items 4 and 5 on the optimization roadmap).
 
+## Compiler optimization sweep (384×512, 25f, 8 steps)
+
+Tested multiple compiler configurations. At this shape (video_seq=768),
+the pipeline is **not compute-bound** — all configs produce essentially
+the same throughput:
+
+| DiT NEFF config | Generation time | Steps/sec | Notes |
+|---|---:|---:|---|
+| O1, BMM-only | 29.1s | 3.38 it/s | Baseline |
+| O1, ISA flash kernel | 29.9s | 3.36 it/s | NKI flash for self-attn |
+| O2, ISA flash + mixed-precision-accum | **28.7s** | 3.35 it/s | All optimizations |
+
+**Conclusion**: At seq=768, the hardware is already efficient. NKI flash
+attention and O2 optimization provide their gains at **higher resolutions**
+(seq≥6144, i.e. 768×512/121 frames) where attention becomes compute-dominant.
+
 ## Optimization roadmap
 
 Listed by effort vs payoff. The first three would together bring Trainium

@@ -6,7 +6,36 @@
   "num_inference_steps": 8,
   "guidance_scale": 4.0,
   "tp_degree": 4,
-  "generation_time_s": 214.75,
-  "per_step_time_s": 26.84,
-  "seed": 42
+  "seed": 10,
+  "results": {
+    "native_eager": {
+      "generation_time_s": 179.1,
+      "per_step_s": 22.39,
+      "notes": "neuron_ltx2_native.py, torchrun TP=4, eager BMM-SDPA"
+    },
+    "precompiled_neff_bmm": {
+      "generation_time_s": 29.1,
+      "per_step_s": 3.64,
+      "steps_per_sec": 3.38,
+      "notes": "neuron_ltx2_optimized.py, O1 compile, BMM-only SDPA"
+    },
+    "precompiled_neff_isa_flash": {
+      "generation_time_s": 29.9,
+      "per_step_s": 3.74,
+      "steps_per_sec": 3.36,
+      "notes": "O1 compile, ISA flash kernel for video self-attn"
+    },
+    "precompiled_neff_o2_full": {
+      "generation_time_s": 28.7,
+      "per_step_s": 3.59,
+      "steps_per_sec": 3.35,
+      "notes": "O2 + ISA flash + mixed-precision-accumulation + saturate-infinity"
+    }
+  },
+  "nki_findings": {
+    "isa_flash_kernel": "Available via neuronx_distributed_inference",
+    "seq_threshold": 512,
+    "video_seq_at_384x512_25f": 768,
+    "conclusion": "No speedup at seq=768 (memory-bound). Gains at seq>=6144 (768x512/121f)."
+  }
 }
