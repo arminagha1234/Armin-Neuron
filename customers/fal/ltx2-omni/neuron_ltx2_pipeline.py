@@ -930,6 +930,46 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
         latents = latents.flatten(4, 7).flatten(1, 3)
         return latents.to(device=orig_device)
 
+    @staticmethod
+    def _unpack_latents(
+        latents: torch.Tensor,
+        num_frames: int,
+        height: int,
+        width: int,
+        patch_size: int = 1,
+        patch_size_t: int = 1,
+    ) -> torch.Tensor:
+        """Override base `_unpack_latents` to do permute+flatten on CPU.
+
+        Same issue as `_pack_*`: permute produces non-contiguous tensor
+        that Neuron's lazy backend can't flatten. Round-trip via CPU.
+        """
+        orig_device = latents.device
+        latents = latents.to(device="cpu")
+        batch_size = latents.size(0)
+        latents = latents.reshape(
+            batch_size, num_frames, height, width, -1,
+            patch_size_t, patch_size, patch_size,
+        )
+        latents = latents.permute(0, 4, 1, 5, 2, 6, 3, 7).contiguous()
+        latents = latents.flatten(6, 7).flatten(4, 5).flatten(2, 3)
+        return latents.to(device=orig_device)
+
+    @staticmethod
+    def _unpack_audio_latents(
+        latents: torch.Tensor,
+        audio_num_frames: int,
+        num_mel_bins: int = 128,
+    ) -> torch.Tensor:
+        """Override base `_unpack_audio_latents` to do permute+flatten
+        on CPU. Same Neuron contiguity issue."""
+        orig_device = latents.device
+        latents = latents.to(device="cpu")
+        batch_size = latents.size(0)
+        latents = latents.reshape(batch_size, audio_num_frames, num_mel_bins, -1)
+        latents = latents.permute(0, 3, 1, 2).contiguous()
+        return latents.to(device=orig_device)
+
     def compile_transformer(self, *args, **kwargs):
         """Compile the DiT transformer for Neuron.
 
