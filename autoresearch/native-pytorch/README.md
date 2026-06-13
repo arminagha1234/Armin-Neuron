@@ -12,19 +12,23 @@ completed end-to-end.
 ## Architecture
 
 ```
-autoresearch GPT (50M params)
-├── Embedding (4.2M)            → NEURON (single logical core)
-├── 8× Transformer blocks       → NEURON (compiled as NEFF)
+autoresearch GPT on Trainium2
+├── Embedding                   → NEURON (single logical core)
+├── N× Transformer blocks       → NEURON (per-block compiled as NEFFs)
 │   ├── CausalSelfAttention     → SDPA with is_causal=True
 │   └── MLP (GeGLU)             → standard linear
-├── LM Head (4.2M, tied)        → NEURON
-└── Optimizer (Muon + AdamW)    → NEURON (eager, no @torch.compile)
+├── LM Head (tied)              → NEURON
+└── Optimizer (Muon + AdamW)    → NEURON (eager)
+
+Tested configs:
+  DEPTH=8  (50M):  dim=512,  4 heads, full-model compile
+  DEPTH=16 (200M): dim=1024, 8 heads, per-block compile (14.1% MFU)
 ```
 
 Everything runs on a single Trainium2 logical core (2 physical NeuronCores
 under LNC=2).
 
-## The Neuron Port (7 changes)
+## The Neuron Port (8 changes)
 
 The porting script (`src/port_to_neuron.py`) documents all changes.
 Summary:
@@ -45,6 +49,10 @@ Summary:
 7. **`DEVICE_BATCH_SIZE` reduced 128 → 16** — single Neuron core has
    ~24 GB user budget; 50M model + activations at seq=2048 fit with
    batch=16.
+8. **Per-block compilation for DEPTH>8** — full-model compile exceeds
+   the 10M instruction limit at larger depths. Compile each attn+mlp
+   block separately. This is the same pattern vLLM-Neuron uses for
+   large models.
 
 ## Reproduction
 
@@ -64,6 +72,19 @@ subsequent runs). After that, the 5-minute training timer starts.
 
 ## Results
 
+### Best configuration (DEPTH=16, 200M params)
+
+```
+model:            ~200M params, depth=16, dim=1024
+mfu_percent:      14.1
+tok/sec:          19,000
+dt/step:          27s
+compile_strategy: per-block (attn + mlp each)
+compile_time:     ~4 min (16 blocks compiled in parallel)
+```
+
+### Baseline configuration (DEPTH=8, 50M params)
+
 ```
 val_bpb:          1.834408
 training_seconds: 300.4
@@ -80,24 +101,37 @@ Throughput: ~40K tok/sec on a single logical core.
 
 ## Known Issues
 
-1. **Low MFU (5.27%)** — batch_size=16 underutilizes the core. On H100
-   the default is 128. Increasing to 32+ would improve MFU but risks
-   OOM on a single Neuron core. Multi-core (TP or DP) would fix this.
-2. **Compile time is long (~19 min)** — first-run cost. NEFFs cache
-   for subsequent runs (the autoresearch agent loop would pay this
-   once then iterate fast).
-3. **`SSSL` window pattern** — sliding-window attention compiles but
+1. **Compile time (~4-19 min first run)** — depends on model depth.
+   DEPTH=8 full-model compile: ~19 min. DEPTH=16 per-block compile:
+   ~4 min (parallel). NEFFs cache for subsequent runs — autoresearch
+   agent loop pays this once then iterates instantly.
+2. **`SSSL` window pattern** — sliding-window attention compiles but
    the window_size parameter from FA3 is not passed through SDPA (SDPA
    doesn't support window_size). All attention is full-causal. This
    may slightly affect final val_bpb vs H100 reference.
+
+## MFU Scaling
+
+MFU is NOT a fixed limitation — it scales with model size:
+
+| Model size | MFU | Why |
+|---|---|---|
+| 50M (DEPTH=8, dim=512) | 5.3% | Matmuls too small to saturate hardware |
+| **200M (DEPTH=16, dim=1024)** | **14.1%** | 4× larger matmuls → 3× better utilization |
+| 300M+ (target) | 20%+ (expected) | Larger dims fill compute units |
+
+The right mental model: Trainium2 cores are designed for 1B+ param
+models. At autoresearch's 50M-200M scale, the hardware is
+underloaded — but the cost per experiment ($0.03-$0.19) is still
+excellent because the instance is cheap.
 
 ## Optimization Roadmap
 
 | Optimization | Expected impact | Effort |
 |---|---|---|
-| Increase DEVICE_BATCH_SIZE to 32-64 | +50-100% MFU | 1 hour (test OOM boundary) |
-| Data parallelism across 4+ cores | 4× throughput | 2-4 hours |
-| NEFF caching across agent iterations | Skip 19-min compile on each run | Built-in (already works) |
+| Increase DEPTH (larger model) | 2-3× MFU (proven: 5%→14%) | Change one number |
+| Data parallelism across 4+ cores | 4× throughput (same MFU) | 2-4 hours |
+| NEFF caching across agent iterations | Skip compile on repeat shapes | Built-in (already works) |
 | NKI flash attention for window pattern | Correct SSSL behavior | 1-2 days |
 
 ## License
