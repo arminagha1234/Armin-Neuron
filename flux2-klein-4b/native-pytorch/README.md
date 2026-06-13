@@ -10,17 +10,20 @@ This is the **lowest-latency path** for FLUX.2-klein on Trainium2.
 
 ## Headline result
 
-**$0.024 per image** with batch parallelism on a $2.23/hr trn2.3xlarge —
-**57% cheaper than H100** at the same workload. Single-image latency is
-65.9 s with `torch.compile`; running two parallel processes on the
-4-core box doubles throughput at unchanged per-image cost.
+**65.9 s per image** at 1024×1024 / 28 steps on a $2.23/hr trn2.3xlarge.
+**38.5 s/image aggregate** with batch parallelism (2 procs × LNC=2).
+
+At current per-step latency, a single H100 at $4.326/hr is 3.3-5.6×
+cheaper per image. The value of this path is functional validation (the
+native PyTorch stack works end-to-end on DiT) and a clear roadmap to
+close the gap via split-aware TP=2 and compiler improvements.
 See [`BENCHMARK_VS_H100.md`](BENCHMARK_VS_H100.md).
 
-| Mode | 28 steps @ 1024×1024 | Per-image | $/image |
-|---|---:|---:|---:|
-| Eager (single core) | 319.2 s | 319.2 s | $0.197 |
-| `torch.compile` (single core) | 65.9 s | 65.9 s | $0.041 |
-| **Batch parallel (2 procs × LNC=2)** | **77 s for 2 imgs** | **38.5 s aggregate** | **$0.024** |
+| Mode | 28 steps @ 1024×1024 | Per-image | $/image (Trn2) | vs H100 ($0.0073) |
+|---|---:|---:|---:|---:|
+| Eager (single core) | 319.2 s | 319.2 s | $0.197 | — |
+| `torch.compile` (single core) | 65.9 s | 65.9 s | $0.041 | H100 5.6× cheaper |
+| **Batch parallel (2 procs × LNC=2)** | **77 s for 2 imgs** | **38.5 s aggregate** | **$0.024** | H100 3.3× cheaper |
 
 First-call compile cost: 896.8 s (one-time per process; NEFF cache
 persists across restarts via `/tmp/neff_cache`).
