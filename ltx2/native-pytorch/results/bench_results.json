@@ -1,0 +1,12 @@
+{
+  "model": "Lightricks/LTX-2",
+  "height": 384,
+  "width": 512,
+  "num_frames": 25,
+  "num_inference_steps": 8,
+  "guidance_scale": 4.0,
+  "tp_degree": 4,
+  "generation_time_s": 214.75,
+  "per_step_time_s": 26.84,
+  "seed": 42
+}
