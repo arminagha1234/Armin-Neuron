@@ -1,19 +1,19 @@
 # Gemma 4 E4B — Native PyTorch
 
-## Status: ✅ Working on CPU, Neuron compile WIP
+## Status: ✅ Working on Neuron (eager mode, correct output)
 
-### CPU Reference (WORKING — perfect output)
+### Neuron (WORKING — "2+2=**4**" confirmed)
 
-```bash
-python3 src/run_e4b_native.py --device cpu --prompt "What is the capital of France?"
-# → The capital of France is **Paris**.
+```
+CPU reference: 2 + 2 = **4** (4.4s)
+Neuron output: 2 + 2 =  **4** (228.8s, eager mode, no torch.compile yet)
 ```
 
-### Neuron (next step)
+trn2.48xlarge, Beta 3 DLC, single core, bf16. Correct text output on Neuron device.
 
 ```bash
-# Requires Beta 3 container (torch_neuronx + torch.device("neuron"))
-python3 src/run_e4b_native.py --device neuron --prompt "What is 2+2?"
+source /opt/torch-neuronx/.venv/bin/activate
+HF_HOME=/mnt/data/hf_cache python3 src/run_e4b_neuron.py
 ```
 
 ## Key Insight
