@@ -1,53 +1,87 @@
 # LTX-2 18.88B on Trainium2 — vLLM-Omni path
 
-**Status: WIP / BLOCKED**
+**Status: Output quality bug — blurry output despite BMM-SDPA fix**
 
 The vLLM-Omni `NeuronLTX2Pipeline` (registered as `model_arch="LTX2Pipeline"`)
-is integrated but not producing correct output. See `native-pytorch/` for the
-validated path.
+runs end-to-end but produces **washed-out video** (pixel std=16 vs CPU ref std=68).
 
 ## What works
 
 - NeuronLTX2Pipeline loads and initializes (text encoder + connectors +
   transformer on Neuron TP=4, VAE on CPU)
-- The BMM-SDPA replacement is injected at the omni transformer source level
-- Full denoising loop runs and produces output frames
+- BMM-SDPA replacement is installed and active
+- Functional RoPE (no in-place `addcmul_` on views) is installed
+- RoPE precomputation on CPU + caching works
+- Full denoising loop runs (245s cold, ~165s warm)
+- Produces 25 frames of output (correct shapes)
+- **No container contention** (earlier failures were caused by a FLUX bench
+  auto-restarting in the same container, not by code bugs)
 
-## What doesn't work
+## Root cause of remaining blur
 
-The omni runtime's shared-memory diffusion-stage dispatcher silently kills the
-LTX-2 denoising process when any other diffusion model (e.g. FLUX.2-klein)
-shares the same container. The omni runtime allows only ONE diffusion engine
-per container. On the test box (`3.150.135.217`), an automated FLUX timing
-benchmark loop runs continuously in the same `vllm_omni` container, preventing
-any LTX-2 validation run from completing.
+The omni `vllm_neuron` compile backend captures the **entire transformer
+forward** as a single FX graph that runs on Neuron in bf16. Inside this
+compiled graph, several preprocessing operations produce wrong results:
 
-Additionally, even when the run does execute (before being killed), the
-stock `F.scaled_dot_product_attention` on Neuron's compiled bf16 lazy backend
-produces numerically wrong output (damped activations + outliers — documented
-in `neuron/examples/LTX/BLUR_INVESTIGATION.md`). The BMM-SDPA fix was applied
-but never successfully validated end-to-end because of the container
-contention.
+1. **Attention mask conversion** (`(1 - mask) * -10000` at line 1625) —
+   when compiled in bf16, the all-zeros result gets constant-folded by XLA
+   and DROPPED from the graph entirely (AWS team docstring confirms this).
+   The net effect: cross-attention runs without any mask constraint.
 
-## Blocked on
+2. **Time embedding MLP** — runs in bf16 inside the compiled graph; precision
+   loss in the SiLU + linear produces slightly different modulation values
+   than CPU fp32.
 
-1. A dedicated container / stage-slot for LTX-2 (no sharing with FLUX bench)
-2. The BMM-SDPA fix needs end-to-end validation (noise_pred std should match
-   CPU reference: 1.05 not 0.84, no ±11 outliers)
-3. The vLLM-Omni framework may need a `forward_neuron` method in its SDPA
-   backend dispatch (currently only `forward_cuda/xpu/npu/hip` exist;
-   Neuron falls through to the abstract class)
+3. **Caption projection** — same bf16 precision issue when compiled.
+
+The **native PyTorch path** (validated, sharp output) solves this by running
+ALL preprocessing on CPU and only sending pre-processed tensors to Neuron.
+The omni path needs the same architectural split.
+
+## The fix (not yet implemented)
+
+Refactor `_NeuronTransformerWrapper.forward()` to do the FULL preprocessing
+on CPU (matching Jim's NxDI `NeuronTransformerWrapper` pattern):
+
+```python
+def forward(self, hidden_states, audio_hidden_states, encoder_hidden_states, ...):
+    # 1. Run proj_in, time_embed, caption_projection ON CPU (eager, fp32)
+    hs = self.inner.proj_in(hidden_states)       # CPU
+    temb, emb_ts = self.inner.time_embed(...)    # CPU
+    enc_hs = self.inner.caption_projection(...)  # CPU
+    # ... (cross-attn conditioning, RoPE, mask conversion)
+
+    # 2. Move 22 tensors to Neuron
+    # 3. Call a "blocks-only" compiled forward that skips preprocessing
+    video_out, audio_out = self._compiled_blocks_forward(*22_tensors)
+    return video_out, audio_out
+```
+
+This requires:
+- Splitting the transformer's forward into "preprocessing" (stays eager/CPU)
+  and "blocks + output" (compiled for Neuron)
+- Changing the compile boundary so only the blocks subgraph gets traced
+- ~2-3 hours of surgery on `neuron_ltx2_pipeline.py`
 
 ## For now: use `native-pytorch/`
 
-The native PyTorch path with `torchrun` + `torch_neuronx` + the ten-fix
-recipe produces correct video output at TP=4. See
-[../native-pytorch/README.md](../native-pytorch/README.md).
+The native PyTorch path with `torchrun` + the `neuron_ltx2_native.py` script
+produces correct video output. The optimized version (`neuron_ltx2_optimized.py`)
+achieves ~30s generation using pre-compiled NEFFs.
 
-## Files
+## Files (patches applied in container, not persisted to repo)
 
-| File | Role |
-|---|---|
-| `src/neuron_ltx2_pipeline.py` | (placeholder) NeuronLTX2Pipeline wrapper |
-| `src/run_ltx2_omni.py` | (placeholder) omni entrypoint |
-| `src/ltx2_stage.yaml` | Stage config (TP=4, devices 0-3) |
+| File | Patch | Status |
+|---|---|---|
+| `ltx2_transformer.py` | BMM-SDPA injected at module level | Applied ✅ |
+| `ltx2_transformer.py` | Functional RoPE (no in-place addcmul_) | Applied ✅ |
+| `sdpa.py` | Original `torch.all` check → `pass` (keeps mask) | Baseline |
+| `neuron_ltx2_pipeline.py` | RoPE precompute + coord CPU→Neuron | Applied ✅ |
+
+## Key learnings for the refactor
+
+From `neuron/examples/LTX/BLUR_INVESTIGATION.md`:
+- Step-0 noise_pred: Neuron std=0.84 vs CPU std=1.06, max ±11 vs ±5
+- Encoder_hidden_states identical (text encoder on CPU is correct)
+- Hidden_states differ due to RNG (not a quality issue, just different seed)
+- The 20% std damping + outlier spikes are the compiled SDPA + mask interaction

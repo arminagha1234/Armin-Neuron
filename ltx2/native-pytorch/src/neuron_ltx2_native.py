@@ -447,6 +447,10 @@ class NeuronTransformerWrapper(nn.Module):
         self.dtype = cpu_transformer.dtype
         self.device = cpu_transformer.device
 
+        # Proxy cache_context (pipeline calls self.transformer.cache_context)
+        from contextlib import nullcontext
+        self._nullcontext = nullcontext
+
         # Keep CPU preprocessing layers
         self.proj_in = cpu_transformer.proj_in
         self.audio_proj_in = cpu_transformer.audio_proj_in
@@ -466,6 +470,10 @@ class NeuronTransformerWrapper(nn.Module):
         # Step-invariant cache
         self._step_cache = None
         self._step_cache_key = None
+
+    def cache_context(self, context_name: str):
+        """Proxy for pipeline's cache_context calls. Returns a no-op context manager."""
+        return self._nullcontext()
 
     def _compute_step_invariant(
         self,

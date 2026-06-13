@@ -7,7 +7,7 @@ that matches your serving need:
 | Path | Best for | 384×512 / 25f / 8 steps (warm) | Per-step | vs H100 |
 |---|---|---:|---:|---:|
 | [`native-pytorch/`](native-pytorch/) | **Lowest latency standalone** | 165.4 s | 20.68 s | 19.4× per-step gap (CPU flat tax) |
-| [`vllm-omni/`](vllm-omni/) | Multi-modal omni serving | — (WIP) | — | — |
+| [`vllm-omni/`](vllm-omni/) | Multi-modal omni serving | — (quality bug) | — | Preprocessing compiled in bf16 → blurry |
 
 (Cost based on trn2.48xlarge $35.76/hr; H100 baseline 2.84 s/clip on
 p5.48xlarge single GPU.)
@@ -32,8 +32,9 @@ optimization lever — see the roadmap in
           ▼                                             ▼
    native-pytorch/                                vllm-omni/
    TP=4, torchrun                                 needs omni engine
-   165.4s warm (CPU-bottlenecked)                 WIP / blocked
-   validated, sharp output ✅                      container contention ⚠️
+   165.4s warm (CPU-bottlenecked)                 quality bug (blurry)
+   30s with pre-compiled NEFFs ⚡                  framework-level fix needed
+   validated, sharp output ✅                      see README for root cause
 ```
 
 ## Highlights
