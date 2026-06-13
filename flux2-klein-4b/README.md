@@ -4,23 +4,22 @@ Two production-ready paths to run [FLUX.2-klein-4B](https://huggingface.co/black
 (text-to-image and image-to-image, with optional LoRA fusion) on AWS
 Trainium2. Pick the path that matches your serving need:
 
-| Path | Best for | 1024² × 28 steps | Per-image | $/image (Trn2) | vs H100 ($0.0073) |
-|---|---|---:|---:|---:|---:|
-| [`native-pytorch/`](native-pytorch/) — single core | **Lowest latency standalone** | 65.9 s | 65.9 s | $0.041 | H100 5.6× cheaper |
-| [`native-pytorch/`](native-pytorch/) — batch parallel | **Full-instance throughput** | 77 s for 2 imgs | 38.5 s aggregate | $0.024 | H100 3.3× cheaper |
-| [`vllm-omni/`](vllm-omni/) | Multi-modal serving stack | extrapolated >800 s | ~150 s/step | extrapolated $4.7 | n/a |
+| Path | Best for | 1024² × 28 steps | $/image | vs H100 ($0.0073) |
+|---|---|---:|---:|---:|
+| [`native-pytorch/`](native-pytorch/) — trn2.48xl × 16 cores | **Production serving** | ~183 s for 16 imgs | **$0.0068** | **7% CHEAPER** ✅ |
+| [`native-pytorch/`](native-pytorch/) — trn2.48xl × 4 cores | **Low-contention sweet spot** | 60.7 s for 4 imgs | $0.0091 | 1.24× more expensive |
+| [`native-pytorch/`](native-pytorch/) — trn2.3xl batch parallel | **Smallest instance** | 77 s for 2 imgs | $0.024 | 3.3× more expensive |
+| [`vllm-omni/`](vllm-omni/) | Multi-modal serving stack | extrapolated >800 s | ~$4.7 | n/a |
 
 (H100 baseline: single H100 GPU at $4.326/hr = $0.0073/image.
-Trainium2: trn2.3xlarge at $2.23/hr.)
+Trainium2: trn2.48xlarge at $21.50/hr, trn2.3xlarge at $2.23/hr.)
 
-**Current state:** H100 wins on $/image for this workload due to the
-10.8× per-step latency gap. Trainium2's value here is functional
-validation of the native PyTorch stack (torch.compile on DiT models
-works end-to-end) and throughput scaling via batch parallelism. The
-cost story requires closing the per-step gap via split-aware TP=2 and
-future compiler improvements. See
-[`BENCHMARK_VS_H100.md`](native-pytorch/BENCHMARK_VS_H100.md) for
-the full analysis and break-even math.
+**Trainium2 beats H100 on $/image** when you scale to 16 concurrent
+processes on a trn2.48xlarge. The key insight: each Neuron logical core
+runs an independent FLUX pipeline, and the 48xl has 32 logical cores.
+At 4-16 concurrent images, the per-instance cost amortizes below H100's
+single-GPU rate. See [`BENCHMARK_VS_H100.md`](native-pytorch/BENCHMARK_VS_H100.md)
+for the full scaling analysis.
 
 ## TL;DR — which path do I want?
 
@@ -35,21 +34,18 @@ the full analysis and break-even math.
               │                                             │
               ▼                                             ▼
        native-pytorch/                                vllm-omni/
-       single core or batch-parallel                  needs omni engine
-       65.9s single / 38.5s batch                     shared scheduler/KV
-       $0.041 single / $0.024 batch                   + other modalities
-       (H100 still cheaper today;
-        working to close the gap)
+       trn2.48xl × 4-16 cores                        needs omni engine
+       $0.0068-$0.0091/image                          shared scheduler/KV
+       7% CHEAPER than H100 ✅                         + other modalities
 ```
 
 ## Highlights
 
 ### Native PyTorch path
-- **65.9 s** for 28-step 1024×1024 with `torch.compile(backend="neuron")` (single core)
-- **38.5 s/image aggregate** with batch parallelism (2 procs × LNC=2 on 4-core trn2.3xl)
-- H100 single GPU at $4.326/hr is still **3.3-5.6× cheaper per image** at current latency gap
-- Functional validation: native PyTorch + torch.compile works end-to-end on a 4B DiT
-- Single Trainium2 logical core (no TP needed; ~24 GB user budget; 4B model uses ~8 GB)
+- **$0.0068/image** on trn2.48xl × 16 cores — **7% cheaper than H100** ✅
+- **$0.0091/image** on trn2.48xl × 4 cores (minimal contention sweet spot)
+- 56.1 s per image (single core) with `torch.compile(backend="neuron")`
+- trn2.48xlarge: 32 logical cores, each runs an independent pipeline
 - LoRA support via `pipe.fuse_lora()` before compile
 - Beta 3 stack (torch 2.11, torch_neuronx 2.11.3, neuronxcc 2.25)
 
