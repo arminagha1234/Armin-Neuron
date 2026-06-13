@@ -157,19 +157,4 @@ torchrun --nproc_per_node=4 --rdzv_backend c10d --rdzv_endpoint localhost:29500 
 - **NKI fused attention for the LTX-2 attention shapes** — the same
   optimization that helped Qwen-Image-Edit by ~12% would apply here.
 
-## Why this matters for fal
 
-LTX-2 is the best-case Trainium target identified in `ACCOUNT_PLAN.md`:
-large (~19B), video (long sequences = compute-bound), open weights.
-Result today: **functionally working but not yet competitive on
-latency**. The 58× gap is not the steady-state — it's the consequence
-of leaving 70% of the request on CPU host. With on-Neuron VAE +
-encoder, expected gap drops toward Qwen-Image-Edit's 5-7× per-step
-asymptote.
-
-The honest framing for fal: "We've shown LTX-2 runs natively on
-Trainium2 with native PyTorch — no waiting on vLLM-Neuron, no NxDI
-required. Latency parity needs another sprint of CPU-tax removal. Per
-$/image at scale, the calculation is the same as Qwen-Image-Edit
-(today H100 wins; if Trainium 1-yr reservation rates apply, gap
-narrows to ~3-5×)."
