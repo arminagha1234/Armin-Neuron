@@ -111,14 +111,14 @@ out = pipe(prompt="Zoom into the red highlighted area",
 out.images[0].save("zoomed.png")
 ```
 
-### Batch parallelism (recommended for production serving)
+### Batch parallelism (for trn2.3xl) and multi-core scaling (for trn2.48xl)
 
-A trn2.3xlarge has 4 physical Neuron cores → 2 logical cores under
-LNC=2. Each logical core can run an independent FLUX pipeline. Launching
-two parallel processes doubles per-instance throughput at unchanged
-per-image cost (~$0.024/image, 57% cheaper than H100). This is the
-shipping recommendation for any batch / async workload where $/image
-is the metric.
+**trn2.48xlarge (recommended for production):** 32 logical cores, each
+runs an independent pipeline. At 4-16 concurrent processes, cost reaches
+$0.0068-$0.0091/image — near or below H100 parity.
+
+**trn2.3xlarge (smallest instance):** 2 logical cores under LNC=2. Two
+parallel processes give 2× throughput at $0.024/image.
 
 ```bash
 # Two processes, each pinned to a different pair of physical cores.
@@ -166,8 +166,8 @@ CPU-reference parity verified within bf16 precision.
 | Instance | Status | Notes |
 |---|---|---|
 | trn2.3xlarge | **VALIDATED** | Single logical core, 8 GB DiT fits with ~16 GB headroom |
-| trn2.48xlarge | Works (overkill) | Could use TP for larger FLUX models |
-| inf2.8xlarge | Untested | Should fit (16 GB/core, 8 GB model) — needs verification |
+| trn2.48xlarge | **VALIDATED** | 32 logical cores. Best cost at 4-16 concurrent. $0.0068/img at 16 cores. |
+| inf2.xlarge-48xlarge | **BLOCKED** | Compile fails: `attention_cte` DMA transpose not supported on inf2 hardware |
 
 ## Known issues
 
