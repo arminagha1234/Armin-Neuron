@@ -1,28 +1,50 @@
-# Gemma 4 E4B — Native PyTorch
+# Gemma 4 E4B — Native PyTorch on Neuron
 
-## Status: ✅ Working on Neuron (eager mode, correct output)
+## Status: ✅ WORKING on Neuron (3.3 tok/s compiled, correct output)
 
-### Neuron (WORKING — "2+2=**4**" confirmed)
+### Results (trn2.48xlarge, single core, compiled)
 
 ```
-CPU reference: 2 + 2 = **4** (4.4s)
-Neuron output: 2 + 2 =  **4** (228.8s, eager mode, no torch.compile yet)
+Output: "The capital of France is **Paris**"
+Warm latency: 2.7s for 9 tokens (3.3 tok/s)
+Cold latency: 3.1s (includes NEFF compile)
+Speedup vs eager: 84×
 ```
 
-trn2.48xlarge, Beta 3 DLC, single core, bf16. Correct text output on Neuron device.
+### Run It
 
 ```bash
+# On trn2 (Beta 3 DLC or native venv with torch_neuronx):
 source /opt/torch-neuronx/.venv/bin/activate
+pip install transformers==5.12.0 torchvision
 HF_HOME=/mnt/data/hf_cache python3 src/run_e4b_neuron.py
 ```
 
-## Key Insight
+### inf2.xlarge ($0.76/hr)
 
-E4B is a **multimodal model** (`Gemma4ForConditionalGeneration`). It requires
-`mm_token_type_ids` from `AutoProcessor.apply_chat_template()`. Without this
-tensor, the model degenerates. With it → perfect text output.
+Model is 14.93 GB — needs TP=2 to split across both cores (16 GB budget per core).
+Use `torchrun --nproc_per_node=2` with `src/tp_plan.py`.
 
-## TTFT Benchmarks (from prior work, compile mode)
+**Current status:** layers alone (8.8 GB) fit on one core; full model needs TP=2.
+
+## Key Discovery
+
+E4B is **multimodal** — requires `mm_token_type_ids` from `AutoProcessor`.
+Plus: Neuron needs a bf16-safe `Gemma4RMSNorm` patch (no `.float()` casts).
+
+## Files
+
+| File | Role |
+|---|---|
+| `src/run_e4b_neuron.py` | **Main** — full Neuron inference with compile |
+| `src/run_e4b_native.py` | CPU reference runner |
+| `src/run_e4b.py` | TTFT benchmark (compile timing) |
+| `src/tp_plan.py` | TP=2 sharding plan for inf2.xlarge |
+| `results/neuron_compiled.md` | 3.3 tok/s compiled results |
+| `results/neuron_working.md` | First correct Neuron output |
+| `results/cpu_reference.md` | CPU reference (Paris/4/Bonjour) |
+
+## TTFT Benchmarks (compile mode, trn2.3xlarge)
 
 | seq_len | eager (ms) | compile (ms) | speedup |
 |---:|---:|---:|---:|
@@ -31,22 +53,10 @@ tensor, the model degenerates. With it → perfect text output.
 | 256 | 433.2 | 56.5 | 7.7× |
 | 512 | 466.0 | 64.1 | 7.3× |
 
-(trn2.3xlarge, TP=2, greedy, batch=1 — measured before text quality was validated)
+## Instances Tested
 
-## Files
-
-| File | Role |
-|---|---|
-| `src/run_e4b_native.py` | **NEW** — proper multimodal runner with `AutoProcessor` |
-| `src/run_e4b.py` | Old TTFT benchmark script (compile timing only) |
-| `src/tp_plan.py` | TP sharding plan for E4B's layers |
-| `src/build_local_model.py` | Patches tokenizer + creates local model dir |
-| `results/cpu_reference.md` | CPU reference outputs (Paris, 4, Bonjour) |
-| `results/compile_prefill_sweep.json` | TTFT timing data |
-| `results/eager_prefill_sweep.json` | Eager timing data |
-
-## Instance
-
-- trn2.48xlarge + inf2.24xlarge (both tested on CPU)
-- Transformers 5.12.0, bf16
-- Next: Beta 3 container for `torch.device("neuron")` inference
+| Instance | Works? | Notes |
+|---|---|---|
+| trn2.48xlarge | ✅ | Single core, full model, 3.3 tok/s |
+| trn2.3xlarge | ✅ | TTFT benchmarks (from prior PR) |
+| inf2.xlarge | ⚠️ OOM on 1 core | Needs TP=2 (next step) |
