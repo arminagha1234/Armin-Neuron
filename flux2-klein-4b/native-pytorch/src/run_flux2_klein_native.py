@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FLUX.2-klein-4B + fal/zoom-LoRA on Trainium2 — native PyTorch + Beta 3.
+"""FLUX.2-klein-4B + zoom-LoRA on Trainium2 — native PyTorch + Beta 3.
 
 Uses `NeuronFlux2KleinPipeline` (a subclass of diffusers'
 `Flux2KleinPipeline`) which:
@@ -13,7 +13,7 @@ Run inside the Beta 3 container:
     HF_TOKEN=<token> \\
     /opt/torch-neuronx/.venv/bin/python /host/run_flux2_klein_native.py \\
         --base-model black-forest-labs/FLUX.2-klein-4B \\
-        --lora fal/flux-2-klein-4B-zoom-lora \\
+        --lora <provider>/flux-2-klein-4B-zoom-lora \\
         --image /host/input_with_red_box.png \\
         --prompt "Zoom into the red highlighted area" \\
         --steps 28 \\
@@ -44,7 +44,12 @@ def neuron_sync() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-model", default="black-forest-labs/FLUX.2-klein-4B")
-    ap.add_argument("--lora", default="fal/flux-2-klein-4B-zoom-lora")
+    ap.add_argument("--lora", default=None,
+                    help="HF repo for the LoRA adapter, e.g. "
+                         "<provider>/flux-2-klein-4B-zoom-lora. "
+                         "Required unless --no-lora is set.")
+    ap.add_argument("--no-lora", action="store_true",
+                    help="Skip LoRA load (run base FLUX.2-klein only).")
     ap.add_argument("--lora-scale", type=float, default=1.1)
     ap.add_argument("--image", required=False)
     ap.add_argument("--prompt", default="Zoom into the red highlighted area")
@@ -67,12 +72,20 @@ def main() -> None:
     )
     print(f"[stage] pipeline loaded in {time.time()-t0:.1f}s on CPU")
 
-    print(f"[stage] applying LoRA {args.lora} (scale={args.lora_scale})")
-    t0 = time.time()
-    pipe.load_lora_weights(args.lora)
-    pipe.fuse_lora(lora_scale=args.lora_scale)
-    pipe.unload_lora_weights()
-    print(f"[stage] LoRA fused in {time.time()-t0:.1f}s")
+    if args.no_lora:
+        print("[stage] --no-lora set, skipping LoRA fuse")
+    else:
+        if not args.lora:
+            raise SystemExit(
+                "ERROR: --lora is required (e.g. <provider>/flux-2-klein-4B-zoom-lora) "
+                "or pass --no-lora to run the base model only."
+            )
+        print(f"[stage] applying LoRA {args.lora} (scale={args.lora_scale})")
+        t0 = time.time()
+        pipe.load_lora_weights(args.lora)
+        pipe.fuse_lora(lora_scale=args.lora_scale)
+        pipe.unload_lora_weights()
+        print(f"[stage] LoRA fused in {time.time()-t0:.1f}s")
 
     device = torch.device("neuron")
     print(f"[stage] applying neuron patches")
