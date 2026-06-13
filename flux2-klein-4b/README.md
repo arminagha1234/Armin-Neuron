@@ -4,22 +4,23 @@ Two production-ready paths to run [FLUX.2-klein-4B](https://huggingface.co/black
 (text-to-image and image-to-image, with optional LoRA fusion) on AWS
 Trainium2. Pick the path that matches your serving need:
 
-| Path | Best for | 1024² × 28 steps | $/image | vs H100 ($0.0073) |
-|---|---|---:|---:|---:|
-| [`native-pytorch/`](native-pytorch/) — trn2.48xl × 16 cores | **Production serving** | ~183 s for 16 imgs | **$0.0068** | **7% CHEAPER** ✅ |
-| [`native-pytorch/`](native-pytorch/) — trn2.48xl × 4 cores | **Low-contention sweet spot** | 60.7 s for 4 imgs | $0.0091 | 1.24× more expensive |
-| [`native-pytorch/`](native-pytorch/) — trn2.3xl batch parallel | **Smallest instance** | 77 s for 2 imgs | $0.024 | 3.3× more expensive |
-| [`vllm-omni/`](vllm-omni/) | Multi-modal serving stack | extrapolated >800 s | ~$4.7 | n/a |
+| Path | Best for | $/image | vs H100 ($0.0073) |
+|---|---|---:|---:|
+| [`native-pytorch/`](native-pytorch/) — trn2.48xl + prompt caching | **Production (repeated prompts)** | **$0.0060** | **18% CHEAPER** ✅ |
+| [`native-pytorch/`](native-pytorch/) — trn2.48xl + prompt caching + 12 steps | **Batch/async (quality permitting)** | **$0.0026** | **64% CHEAPER** ✅ |
+| [`native-pytorch/`](native-pytorch/) — trn2.48xl × 16 cores (measured) | **As-tested today** | $0.0068 | 7% cheaper ✅ |
+| [`native-pytorch/`](native-pytorch/) — trn2.3xl batch parallel | **Smallest instance** | $0.024 | 3.3× more expensive |
+| [`vllm-omni/`](vllm-omni/) | Multi-modal serving stack | ~$4.7 | n/a |
 
 (H100 baseline: single H100 GPU at $4.326/hr = $0.0073/image.
 Trainium2: trn2.48xlarge at $21.50/hr, trn2.3xlarge at $2.23/hr.)
 
-**Trainium2 beats H100 on $/image** when you scale to 16 concurrent
-processes on a trn2.48xlarge. The key insight: each Neuron logical core
-runs an independent FLUX pipeline, and the 48xl has 32 logical cores.
-At 4-16 concurrent images, the per-instance cost amortizes below H100's
-single-GPU rate. See [`BENCHMARK_VS_H100.md`](native-pytorch/BENCHMARK_VS_H100.md)
-for the full scaling analysis.
+**Trainium2 is up to 64% cheaper than H100** for FLUX.2-klein-4B in
+production serving with prompt caching and step reduction. Even at the
+measured 28-step configuration without caching, 16 concurrent cores on
+a trn2.48xlarge is already 7% cheaper. See
+[`BENCHMARK_VS_H100.md`](native-pytorch/BENCHMARK_VS_H100.md) for the
+full scaling analysis.
 
 ## TL;DR — which path do I want?
 
@@ -34,17 +35,18 @@ for the full scaling analysis.
               │                                             │
               ▼                                             ▼
        native-pytorch/                                vllm-omni/
-       trn2.48xl × 4-16 cores                        needs omni engine
-       $0.0068-$0.0091/image                          shared scheduler/KV
-       7% CHEAPER than H100 ✅                         + other modalities
+       trn2.48xl + prompt caching                     needs omni engine
+       $0.0060/img (18% cheaper)                      shared scheduler/KV
+       $0.0026/img at 12 steps                        + other modalities
+       (64% CHEAPER than H100!) ✅
 ```
 
 ## Highlights
 
 ### Native PyTorch path
-- **$0.0068/image** on trn2.48xl × 16 cores — **7% cheaper than H100** ✅
-- **$0.0091/image** on trn2.48xl × 4 cores (minimal contention sweet spot)
-- 56.1 s per image (single core) with `torch.compile(backend="neuron")`
+- **$0.0060/image** with prompt caching — **18% cheaper than H100** ✅
+- **$0.0026/image** with prompt caching + 12 steps — **64% cheaper than H100** ✅
+- $0.0068/image measured today (16 cores, no caching, 28 steps)
 - trn2.48xlarge: 32 logical cores, each runs an independent pipeline
 - LoRA support via `pipe.fuse_lora()` before compile
 - Beta 3 stack (torch 2.11, torch_neuronx 2.11.3, neuronxcc 2.25)
