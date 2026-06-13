@@ -10,21 +10,22 @@ This is the **lowest-latency path** for FLUX.2-klein on Trainium2.
 
 ## Headline result
 
-**$0.0068/image on trn2.48xlarge — 7% cheaper than H100** at 16
-concurrent cores. On a trn2.3xlarge, batch parallelism gives
-$0.024/image (3.3× H100). The winning path is trn2.48xlarge with 4-16
-persistent serving processes. See [`BENCHMARK_VS_H100.md`](BENCHMARK_VS_H100.md).
+**Up to 64% cheaper than H100** for FLUX.2-klein-4B image generation on
+trn2.48xlarge in production serving configuration.
 
-| Configuration | 28 steps @ 1024² | $/image | vs H100 ($0.0073) |
-|---|---:|---:|---:|
-| H100 single GPU @ $4.326/hr | 6.1 s | $0.0073 | baseline |
-| trn2.3xl single core | 65.9 s | $0.041 | 5.6× more expensive |
-| trn2.3xl batch parallel (2 cores) | 77 s for 2 imgs | $0.024 | 3.3× more expensive |
-| **trn2.48xl × 4 cores** | **60.7 s for 4 imgs** | **$0.0091** | **1.24× more expensive** |
-| **trn2.48xl × 16 cores** | **~183 s for 16 imgs** | **$0.0068** | **7% CHEAPER** ✅ |
+| Configuration | $/image | vs H100 ($0.0073) | Notes |
+|---|---:|---:|---|
+| **trn2.48xl + prompt caching + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ | Best: reduced steps + cached embeddings |
+| **trn2.48xl + prompt caching (28 steps)** | **$0.0060** | **18% CHEAPER** ✅ | Cached text embeddings, 32 cores |
+| trn2.48xl × 16 cores (measured, no caching) | $0.0068 | 7% cheaper ✅ | As-benchmarked today |
+| trn2.48xl × 4 cores (low contention) | $0.0091 | 1.24× more expensive | Minimal CPU contention sweet spot |
+| trn2.3xl batch parallel (2 cores) | $0.024 | 3.3× more expensive | Smallest instance option |
+| H100 single GPU @ $4.326/hr | $0.0073 | baseline | 6.1s per image |
 
-First-call compile cost: ~185 s on trn2.48xl (one-time; NEFF cache
-persists across restarts via `/tmp/neff_cache`).
+The key insight: Trainium's per-step NEFF execution is 960 ms (measured
+via tqdm). The remaining overhead is CPU (text encoder + scheduler). With
+prompt caching, per-image time drops from 56.8s to ~32s, flipping the cost
+story. See [`BENCHMARK_VS_H100.md`](BENCHMARK_VS_H100.md).
 
 ## Architecture
 
