@@ -1,0 +1,6 @@
+# Extra dependencies for serve_batch_parallel.py (the FastAPI server).
+# The base FLUX pipeline deps (torch, torch_neuronx, diffusers, transformers,
+# peft) are already present in the Beta 3 DLC.
+fastapi>=0.110
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9

@@ -121,6 +121,28 @@ TP=2 path is the next lever.
 
 ## Raw data
 
+### Multi-resolution sweep (single-core compile, 28 steps, bf16)
+
+Full cost curve across common generation resolutions, all on the same
+trn2.3xlarge single logical core:
+
+| Resolution | Compile (one-time) | Warm (28 steps) | Per-step | $/image | Batch parallel $/img |
+|---:|---:|---:|---:|---:|---:|
+| 256×256 | 101 s | **5.4 s** | **194 ms** | **$0.003** | $0.002 |
+| 512×512 | 187 s | **15.8 s** | **566 ms** | **$0.010** | $0.005 |
+| 768×768 | 436 s | **35.2 s** | **1,258 ms** | **$0.022** | $0.011 |
+| 1024×1024 | 897 s | **65.9 s** | **2,350 ms** | **$0.041** | $0.024 |
+| 1280×1280 | 3,207 s | **176.5 s** | **6,302 ms** | **$0.109** | $0.055 |
+
+Batch parallel $/image assumes 2× throughput (two concurrent processes
+on the 4-core trn2.3xl under LNC=2). 1280² compile is heavy (~53 min)
+but amortized by the persistent NEFF cache.
+
+The cost curve scales roughly O(n²) with resolution (as expected for a
+DiT where attention is quadratic in sequence length). 768² is the sweet
+spot for cost-sensitive batch workloads ($0.011/image with batch
+parallel — **80% cheaper than H100** at $0.055 for a full 1024² run).
+
 ### Trainium eager (4 steps @ 512×512)
 - First call: 12.9 s
 - Cached call: 10.6 s
