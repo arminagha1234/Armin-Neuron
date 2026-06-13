@@ -933,14 +933,19 @@ class NeuronLTX2Pipeline(LTX2Pipeline):
     def compile_transformer(self, *args, **kwargs):
         """Compile the DiT transformer for Neuron.
 
-        With the rope precompute pattern in `_NeuronTransformerWrapper.
-        forward()`, the inner DiT no longer creates fresh tensors via
-        device-dependent ops (`torch.linspace(device=hidden_states.
-        device)`) inside the compile boundary. So `fullgraph=True` is
-        safe again.
+        Use `fullgraph=False` to let Dynamo split the giant LTX-2 DiT
+        forward into smaller subgraphs. With `fullgraph=True`, the
+        single big NEFF compile of one of the transformer blocks
+        triggers what looks like a SIGKILL (silent worker death after
+        ~1-2 minutes of `Acquired compilation lock`). Splitting the
+        graph keeps each NEFF small enough to compile reliably.
+
+        Trade-off: more graph breaks means more eager-mode dispatch
+        overhead, slightly slower per-step. But correctness over
+        performance for v1.
         """
         t_kwargs = copy.deepcopy(kwargs)
-        t_kwargs["fullgraph"] = True
+        t_kwargs.setdefault("fullgraph", False)
         t_options = t_kwargs.setdefault("options", {})
         t_options["compiler_args"] = (
             "--model-type=transformer --auto-cast=none -O1 "
