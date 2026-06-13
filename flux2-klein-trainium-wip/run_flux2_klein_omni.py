@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """FLUX.2-klein 4B image-to-image on Neuron via the vllm-omni Omni entrypoint.
 
-Mirrors `customers/fal/run_ltx2_omni.py`. Loads the model under our
+Mirrors the LTX-2 / Wan 2.2 omni runner shape. Loads the model under our
 `NeuronFlux2KleinPipeline` (registered for `model_arch="Flux2KleinPipeline"`),
-optionally fuses the fal/flux-2-klein-4B-zoom-lora, and runs a few
-canonical inference calls.
+optionally fuses an image-to-image zoom LoRA, and runs a few canonical
+inference calls.
 
 Usage:
     python run_flux2_klein_omni.py                          # T2I, 1024x1024, 28 steps
@@ -41,11 +41,11 @@ parser.add_argument("--lora-path", type=str,
                     default=None,
                     help=(
                         "Local path or HF id for the LoRA. "
-                        "fal customer LoRA: fal/flux-2-klein-4B-zoom-lora "
-                        "(file: flux-red-zoom-lora.safetensors)"
+                        "Example image-to-image zoom LoRA file: "
+                        "flux-red-zoom-lora.safetensors"
                     ))
 parser.add_argument("--lora-scale", type=float, default=1.1,
-                    help="LoRA scale; fal recommends 1.1 for the zoom LoRA")
+                    help="LoRA scale; the zoom LoRA card recommends 1.1")
 parser.add_argument("--image", type=str, default=None,
                     help=(
                         "Path to a reference image for image-to-image. "

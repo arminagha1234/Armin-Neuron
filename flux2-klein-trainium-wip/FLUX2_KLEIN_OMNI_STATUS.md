@@ -1,8 +1,8 @@
 # FLUX.2-klein 4B on vllm-omni / Neuron — WIP status
 
 **Date:** 2026-06-13
-**Customer driver:** `fal/flux-2-klein-4B-zoom-lora` (image-to-image
-zoom LoRA on FLUX.2-klein-4B base).
+**Customer driver:** external image-to-image zoom LoRA on top of
+FLUX.2-klein-4B base.
 **Stack:** vllm-omni 0.19.0rc1 + vllm-omni-neuron plugin + diffusers 0.38.0,
 torch 2.7.0, torch-neuronx, in container
 `421672808698.dkr.ecr.us-east-1.amazonaws.com/concourse-release-1cb0647:pr-655cd3ee9b8d69818e52f37fbe1bb2a445bfbd60`.
@@ -81,7 +81,7 @@ Despite class-level + instance-level + module-level patches in
 | `neuron_flux2_klein_pipeline.py` | Neuron Flux2-klein subclass with all 12+ patches |
 | `run_flux2_klein_omni.py` | Runner script (mirrors `run_ltx2_omni.py`) |
 | `flux2_klein_stage.yaml` | Stage config (TP=1 default) |
-| `merge_lora.py` | Offline LoRA-merge tool for fal/flux-2-klein-4B-zoom-lora |
+| `merge_lora.py` | Offline LoRA-merge tool for the image-to-image zoom LoRA |
 | `fxgraph_v6.txt` | Captured FX graph showing the surviving `torch.polar` calls |
 | `FLUX2_KLEIN_OMNI_STATUS.md` | This file |
 
@@ -127,7 +127,7 @@ is the most robust but slower.
    kwargs and skips the `rope_prepare` call entirely.
 3. **Validate**: tiny shape (256×256, 4 steps) → real PNG output.
 4. **Then merge LoRA + production shape** (1024×1024, 28 steps,
-   `fal/flux-2-klein-4B-zoom-lora` zoom-LoRA).
+   image-to-image zoom-LoRA).
 
 ## How to repro the segfault
 

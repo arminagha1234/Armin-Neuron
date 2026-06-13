@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Merge fal/flux-2-klein-4B-zoom-lora into FLUX.2-klein-4B base offline.
+"""Merge an external transformer-only LoRA into FLUX.2-klein-4B base offline.
 
 Why offline merge instead of `pipe.load_lora_weights(...)` at runtime:
   - vllm-omni's pipeline construction happens inside spawned engine
@@ -8,9 +8,8 @@ Why offline merge instead of `pipe.load_lora_weights(...)` at runtime:
   - The cleanest v1 path is to merge LoRA → base weights once, point
     --model-path at the merged dir, and let vllm-omni load it like any
     other base checkpoint.
-  - The fal LoRA is a transformer-only adapter (~76 MB), so the merge
-    only touches the transformer subfolder; the encoder/VAE/tokenizer
-    pass through unchanged.
+  - Transformer-only LoRA adapters (~76 MB) only touch the transformer
+    subfolder; the encoder/VAE/tokenizer pass through unchanged.
 
 This script uses the diffusers FluxPipeline-style merging API. It runs
 on CPU, takes ~1-2 minutes, and writes the merged checkpoint to
@@ -22,8 +21,8 @@ Usage (inside the vllm_omni container or any container with diffusers 0.38+):
 
     python merge_lora.py \\
         --base-model black-forest-labs/FLUX.2-klein-4B \\
-        --lora fal/flux-2-klein-4B-zoom-lora \\
-        --lora-file flux-red-zoom-lora.safetensors \\
+        --lora <hf-org>/<lora-repo> \\
+        --lora-file <lora-weights>.safetensors \\
         --lora-scale 1.1 \\
         --out-dir /work/flux2_klein_merged_zoom_lora
 
@@ -43,7 +42,8 @@ import torch
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-model", default="black-forest-labs/FLUX.2-klein-4B")
-    parser.add_argument("--lora", default="fal/flux-2-klein-4B-zoom-lora")
+    parser.add_argument("--lora", required=True,
+                        help="Local path or HF id of the transformer-only LoRA repo.")
     parser.add_argument("--lora-file",
                         default="flux-red-zoom-lora.safetensors",
                         help="Specific safetensors file in the LoRA repo to use.")

@@ -28,9 +28,9 @@ Reference templates:
 PIPELINE_REGISTRY at the bottom enables auto-registration when this file is
 dropped into the vllm_omni_neuron plugin's diffusion/models/ folder.
 
-Customer driver: fal/flux-2-klein-4B-zoom-lora — image-to-image editing LoRA
-on top of FLUX.2-klein 4B base. The LoRA is a transformer-only adapter
-(~76 MB safetensors) that fuses into the DiT before serving.
+Customer driver: external image-to-image zoom LoRA on top of FLUX.2-klein 4B base.
+The LoRA is a transformer-only adapter (~76 MB safetensors) that fuses into the
+DiT before serving.
 """
 from __future__ import annotations
 
