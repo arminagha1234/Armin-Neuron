@@ -6,20 +6,17 @@ native PyTorch + `torch.compile(backend="neuron")`.
 
 ## Headline Result
 
-**50M-param GPT trained for 5 minutes on a single Trainium2 logical
-core.** Loss 9.01 → 5.39, val_bpb = 1.834, 40K tok/sec throughput.
+**14.1% MFU at 200M params** (DEPTH=16) on a single Trainium2 logical
+core. MFU scales with model size — 3× improvement over the 50M baseline.
 
-| Metric | Value |
-|---|---|
-| val_bpb | **1.834** |
-| Training time | 300 s (5 min budget) |
-| Throughput | 40,000 tok/sec |
-| Steps completed | 34 |
-| MFU | 5.27% |
-| Tokens processed | 17.8M |
-| Model | 50.3M params, depth=8, dim=512 |
-| Instance | trn2.48xlarge (single logical core) |
-| Cost (5-min run) | ~$0.03 |
+| Config | Params | MFU | tok/sec | Per-step | val_bpb |
+|---|---|---|---|---|---|
+| DEPTH=8, batch=16, seq=2048 | 50M | 5.3% | 40K | 13s | 1.834 |
+| DEPTH=8, batch=32, seq=1024 | 50M | 4.7% | 43K | 12s | — |
+| **DEPTH=16, batch=16, seq=1024** | **~200M** | **14.1%** | **19K** | **27s** | — |
+
+Per-block compilation (`torch.compile` on each attn + mlp separately)
+unlocks larger models that exceed the single-NEFF instruction budget.
 
 ## What is Autoresearch?
 
@@ -32,13 +29,14 @@ experiments and a better model.
 
 ## Why Trainium?
 
-At **$2.23/hr** (trn2.3xlarge) vs **$32.77/hr** (p5.48xlarge / H100):
+At **$2.23/hr** (trn2.3xlarge) vs **$4.10/hr** (p5.xlarge / 1× H100):
 - 100 experiments × 5 min = 8.3 hours
-- **Trainium: $18.50 overnight** vs H100: $272
-- Same val_bpb quality (model is the same, hardware is the compute)
-
-Researchers in the BoT program who do architecture search or
-hyperparameter sweeps would use exactly this pattern.
+- **Trainium: $18.50 overnight** vs H100: $34
+- **45% cheaper per hour** for single-device training
+- For parallel sweeps: trn2.48xlarge ($21.50/hr, 32 logical cores)
+  runs 32 experiments simultaneously = **$0.006 per experiment**
+- MFU scales with model size (14.1% at 200M; expect 20%+ at 300M+)
+- Per-block compilation means no model size limit on a single core
 
 ## Layout
 

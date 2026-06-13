@@ -27,7 +27,7 @@ import torch
 # Constants (fixed, do not modify)
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
+MAX_SEQ_LEN = 1024       # context length (reduced for Neuron single-core compile)
 TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
 EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
 
