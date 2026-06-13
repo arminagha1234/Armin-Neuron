@@ -1,135 +1,108 @@
-# Internal Amazon code search — FLUX.2 on Neuron is already shipping via NxDI
+# Internal Amazon code search — real-arithmetic RoPE math we can lift
 
-After hitting the vllm-omni Dynamo-vs-monkey-patch wall, I searched internal
-code for prior FLUX.2 + Neuron work. Big finding: a different team has FLUX.2
-**GREEN on Neuron** via a totally different stack.
+After hitting the segfault on `torch.polar` in our vllm-omni FLUX.2-klein
+pipeline, I searched internal code for prior FLUX.2 + Neuron work to see
+how anyone handled the same complex64 issue.
 
-## Summary
+## What I found
 
-- **`NeuronAutoFixerAIM`** repo, `oncall_agent/generated_models/dit/flux2-dit-on-nxdi-neuron/`
-  has a complete FLUX.2 NxDI port:
-  - `neuron_flux2_dit.py` — full custom DiT (replaces diffusers' transformer)
-  - `flux2_pipeline.py` — FlowMatchEuler scheduler
-  - `flux2_tp_shard.py` — Megatron TP shard for fused-SwiGLU + fused-qkv-mlp
-  - `flux2_dev_tp_run.py` — production-shape compile + run script
-- **Status:** GREEN on FLUX.2-dev (32B sibling). Real on-Neuron run
-  `T_65f22500-48c5-4963-b297-5c7f43ecec51`, generated 512×512 PNG,
-  CLIP-score 0.4246. Run on trn2.48xlarge TP=8 LNC=2.
-- **Klein-specific note** in their script header:
-  > "the FLUX.2 DiT denoiser bf16 (~64 GB) cannot be traced on a single
-  > NeuronCore (**klein-4B barely cleared @512^2**; dev OOMs / EBVF030)"
+- **`NeuronAutoFixerAIM`** has FLUX.2 working on Neuron — they hit the
+  exact same complex64/`torch.polar` problem (their docstring even calls
+  out the same SIGKILL: *"torch-xla's complex lowering is incomplete →
+  tracing the graph on Neuron HARD-CRASHES the process"*) and solved it
+  by replacing the math with a real-valued rotation that produces the
+  same outputs.
 
-So FLUX.2-klein-4B at 512² works on a SINGLE core via their NxDI path.
-At 1024² (production) it likely needs TP=2.
+## The math we should lift (no `torch.polar`)
 
-## Why it works (and our vllm-omni path doesn't)
-
-The NxDI `parallel_model_trace` path uses the upstream diffusers
-`apply_rotary_emb` + diffusers' `Flux2PosEmbed.forward` AS-IS. The trace
-backend is **NEFF compilation via the static-shape NxDI path**, NOT
-`torch.compile(backend="neuron")` via Dynamo.
-
-In our vllm-omni stack:
-- vllm-omni runs the model under `torch.compile(backend="vllm_neuron")`
-- Dynamo introspects every nn.Module forward and inlines the bytecode
-- `torch.polar` (used by diffusers' `get_1d_rotary_pos_embed(use_real=False)`)
-  goes into the FX graph, then segfaults at execute (Neuron has no complex64)
-- Monkey-patching the forward (instance-level OR class-level) doesn't change
-  what Dynamo emits — it's keyed on bytecode
-
-In the NxDI path:
-- `parallel_model_trace` runs the forward with sample inputs
-- HLO-level lowering of `torch.polar` is broken — same root cause
-- BUT NxDI evidently has a workaround at the lowering level (or the larger
-  `inline_weights_to_neff` + per-rank build avoids the bad lowering)
-- Result: it compiles. Real PNG out the other end.
-
-## Proven recipe (from their script)
+From their `neuron_flux2_dit.py`:
 
 ```python
-# 1. Build the diffusers Flux2Pipeline on CPU
-pipe = Flux2Pipeline.from_pretrained("black-forest-labs/FLUX.2-klein-4B", torch_dtype=bf16)
-transformer = pipe.transformer
+def flux2_get_1d_rope(dim: int, pos: torch.Tensor, theta: float):
+    """Real-valued (cos, sin) — equivalent to diffusers'
+    get_1d_rotary_pos_embed(use_real=True, repeat_interleave_real=True)
+    BUT without ever building a complex tensor.
 
-# 2. Capture one real forward's inputs (probe one pipeline step)
-captured = {}
-def _cap(**kw): captured.update(kw); raise StopIteration
-transformer.forward = _cap
-try: pipe(prompt=..., ...)
-except StopIteration: pass
-example = (captured["hidden_states"], captured["encoder_hidden_states"], ...)
+    Returns: cos, sin — both shape (S, dim), all real fp32.
+    """
+    assert dim % 2 == 0
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2,
+                                          dtype=torch.float64,
+                                          device=pos.device) / dim))
+    freqs = torch.outer(pos.double(), freqs)        # [S, dim/2]
+    cos = freqs.cos().repeat_interleave(2, dim=1).float()  # [S, dim]
+    sin = freqs.sin().repeat_interleave(2, dim=1).float()  # [S, dim]
+    return cos, sin
 
-# 3. parallel_model_trace with the gated-SwiGLU + fused-qkv-mlp shard
-traced = parallel_model_trace(
-    _build_sharded_transformer,   # rebuilds + applies flux2_tp_shard per rank
-    example,
-    tp_degree=TP,                  # 1 for klein@512², 2 for klein@1024²
-    compiler_args="--model-type=transformer -O1 --lnc=2 ...",
-    inline_weights_to_neff=True,
-)
-parallel_model_save(traced, "/path/to/sharded_neff/")
 
-# 4. Wrap the traced NEFF as a drop-in transformer replacement
-class NeuronDenoiser(nn.Module):
-    def __init__(self, traced, ref): ...
-    def __call__(self, hidden_states=..., return_dict=True, ...):
-        out = self.traced(...)
-        return Transformer2DModelOutput(sample=out)
+def flux2_apply_rope(x, cos, sin):
+    """Apply RoPE via the textbook real-arithmetic formula:
+        out_real = x_real*cos - x_imag*sin
+        out_imag = x_real*sin + x_imag*cos
+    Equivalent to view_as_complex(x) * (cos+i*sin) -> view_as_real,
+    but never builds a complex tensor.
 
-pipe.transformer = NeuronDenoiser(parallel_model_load(SDIR), transformer)
-
-# 5. Generate
-img = pipe(prompt=..., num_inference_steps=8, height=512, width=512, ...).images[0]
+    x:   (B, S, H, Dh)
+    cos: (S, Dh)    sin: (S, Dh)
+    """
+    cos = cos[None, :, None, :]
+    sin = sin[None, :, None, :]
+    x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)
+    x_rot = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
+    return (x.float() * cos + x_rot.float() * sin).to(x.dtype)
 ```
 
-## Gap between their work and our customer ask
+Their docstring confirms this is bit-equivalent to the complex version.
+The whole file is at:
+`code.amazon.com/packages/NeuronAutoFixerAIM/blobs/mainline/--/oncall_agent/generated_models/dit/flux2-dit-on-nxdi-neuron/neuron_flux2_dit.py#L195-L256`
 
-| | Their FLUX.2-dev port | Our FLUX.2-klein-4B + zoom-LoRA |
-|---|---|---|
-| Model | 32B `FLUX.2-dev` (gated, single-files) | 4B `FLUX.2-klein-4B` (open) |
-| TP | 8 (required for 32B) | likely 1 @ 512², 2 @ 1024² |
-| LoRA | none | `fal/flux-2-klein-4B-zoom-lora` (need to merge offline) |
-| Pipeline | text-to-image (`Flux2Pipeline`) | image-to-image (`Flux2KleinPipeline`) |
-| Status | GREEN, compile + image | not started on this path |
+(There's also a Lumina2 patch in the same repo at
+`oncall_agent/generated_models/dit/sd35-large-mmdit-on-neuron/sd3_image_run.py:195`
+named `_real_apply_rotary_emb` — same idea.)
 
-## Action plan (replaces the vllm-omni path)
+## Why our last `_NeuronFluxPosEmbed` swap didn't take
 
-1. **Pull the AutoFixer code into our workspace** as a starting point.
-2. **Adapt for klein**: swap `Flux2Pipeline` → `Flux2KleinPipeline` (image-
-   to-image), add the `image=` input handling.
-3. **Adapt for the LoRA**: merge `fal/flux-2-klein-4B-zoom-lora` into base
-   weights using our existing `merge_lora.py`, point at merged dir.
-4. **Try TP=1 first** at 512² (matching their klein note), then TP=2 at
-   1024² for the production shape.
-5. **Wire into a customer-grade serving wrapper** (FastAPI like Qwen-Image-
-   Edit Path C) once the model itself works on-Neuron.
+Our v1 attempt called `get_1d_rotary_pos_embed(..., use_real=False)` then
+did `.real`/`.imag` — which means a complex tensor still gets built
+(just on CPU). When Dynamo traces `Flux2PosEmbed.forward` it inlines the
+ORIGINAL bytecode (which still has `torch.polar` inside
+`get_1d_rotary_pos_embed(use_real=False)` regardless of our swap), so
+the FX graph still emits `torch.polar`.
 
-This bypasses vllm-omni entirely — same as the LTX-2 native PyTorch path
-that shipped successfully (PR #7). vllm-omni-omni serving is a Phase 2
-once the model is proven on-Neuron via NxDI.
+The fix: replace the math AT THE BYTECODE LEVEL by patching
+`diffusers.models.embeddings.get_1d_rotary_pos_embed` with a real-only
+implementation that NEVER calls `torch.polar`. Even if Dynamo inlines
+the original `Flux2PosEmbed.forward`, when it follows the inner call
+to `get_1d_rotary_pos_embed`, it'll see our patched version's bytecode.
 
-## Repo references
+## Plan for next session (stays on vllm-omni)
 
-- `code.amazon.com/packages/NeuronAutoFixerAIM/blobs/mainline/--/oncall_agent/generated_models/dit/flux2-dit-on-nxdi-neuron/`
-  - `neuron_flux2_dit.py` (570 lines, complete denoiser)
-  - `flux2_tp_shard.py` (483 lines, Megatron shard + CPU rank-3 proof)
-  - `flux2_pipeline.py` (412 lines, FlowMatchEuler scheduler)
-  - `flux2_dev_tp_run.py` (412 lines, runnable recipe)
-  - `test_flux2_dit_port.py` (CPU rank-3 unit tests, 15 cases)
-  - `test_flux2_tp_shard.py` (CPU rank-3 TP shard correctness)
-- `code.amazon.com/packages/NeuronAutoFixerAIM/blobs/mainline/--/oncall_agent/enabled_models/dit/flux2_dev_tp8_512_dattn/MODEL.md`
-  (the GREEN report for the 32B dev, real PNG + CLIP score)
+1. **Add a `_real_get_1d_rotary_pos_embed` function** to
+   `neuron_flux2_klein_pipeline.py` using the formula above.
+2. **Patch `diffusers.models.embeddings.get_1d_rotary_pos_embed` at
+   import time** in our pipeline's `__init__` (module-level patch — same
+   trick we used for `get_timestep_embedding`).
+3. **Also patch `apply_rotary_emb`** in
+   `diffusers.models.embeddings` if Dynamo inlines that too (it's
+   called from `Flux2Attention.forward` / `Flux2ParallelSelfAttention.forward`).
+4. **Re-run** with the smoke test. The polar count in the FX graph
+   should go from 16 → 0; if the segfault root cause was complex64,
+   the segfault should go too.
 
-## Note for the next session
+## What this means for fal
 
-The vllm-omni infrastructure I built (PR #9) is NOT wasted — it stays valid
-for production-shape multi-tenant serving once the NxDI path proves the
-model works on Neuron. The two paths are complementary:
+- Same vllm-omni production-shape PR (#9), one more module-level patch,
+  retry.
+- We are staying on vllm-omni — no NxDI, no native-PyTorch fork — per
+  the team's direction.
+- If this works the customer story is unchanged: vllm-omni is the
+  production-deploy shape; the fix removes the last surfacing complex64
+  op in the FLUX.2 transformer trace.
 
-1. **NxDI** = "does the model work on Neuron at all? what's the latency?"
-   → benchmark answer
-2. **vllm-omni** = "drop-in replacement for the GPU vLLM stack at scale"
-   → production deployment shape
+## Honest expectation
 
-Same pattern as LTX-2: native PyTorch (NxDI-equivalent) shipped first, then
-vllm-omni was attempted in parallel.
+The `torch.polar` bytecode-level patch is the most likely cleanly-stuck
+fix we haven't tried yet. The Lumina2 precedent says it works on Neuron.
+But there's a real chance the segfault has a second cause behind it
+(activation memory, an unsupported XLA lowering of a different op, etc.)
+that only becomes visible once polar is gone.
