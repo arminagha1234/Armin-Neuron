@@ -80,13 +80,13 @@ Smooth monotonic decrease — model is learning correctly on Trainium.
 | Instance | $/hr | 5-min run cost | 100 experiments (overnight) |
 |---|---|---|---|
 | **trn2.3xlarge** | $2.23 | $0.19 | **$18.50** |
-| **trn2.48xlarge** | $21.50 | $1.79 | $179 |
-| p5.48xlarge (H100) | $32.77 | $2.73 | $272 |
+| trn2.48xlarge | $21.50 | $1.79 | $179 |
+| p5.xlarge (1× H100) | $4.10 | $0.34 | $34 |
 
-Note: trn2.48xlarge is overkill for this (uses 1 of 64 cores). A
-trn2.3xlarge ($2.23/hr) is the right instance — same single-core
-performance, 10× cheaper. The $18.50 overnight figure assumes
-subsequent runs skip the ~19-min compile (cached NEFFs).
+Autoresearch needs a single GPU — compare trn2.3xlarge ($2.23/hr) vs
+p5.xlarge ($4.10/hr, 1× H100). Trainium is **45% cheaper per hour**.
+The trn2.3xlarge uses 1 of 2 logical cores; a trn2.48xl is overkill
+unless running many parallel sweeps.
 
 ## Per-Step Breakdown
 
@@ -106,9 +106,11 @@ attention. Compile fuses the whole model into a single execution graph.
 | MFU (50M model) | ~50% | 5.3% | Small model underloads both, but GPU amortizes better |
 | MFU (200M model) | ~50% | **14.1%** | Gap narrows with model size; expect 20%+ at 300M |
 | Window attention | SSSL via FA3 | Full-causal SDPA | NKI kernel would fix |
-| Cost per experiment | $2.73 (5 min) | $0.19 (5 min) | **14× cheaper per experiment** |
+| Cost per experiment | $0.34 (5 min on p5.xl) | $0.19 (5 min on trn2.3xl) | **45% cheaper per experiment** |
 
 The key insight: MFU is low at small model sizes because the hardware
 is designed for large models. For autoresearch at 200M+ params, MFU is
-14%+ and climbing. The cost advantage (14× per experiment) is the
-primary value — not peak hardware utilization.
+14%+ and climbing. The cost advantage (45% cheaper per hour vs single
+H100) plus the ability to run many parallel sweeps on a trn2.48xl
+(32 experiments simultaneously at $21.50/hr = $0.006 per experiment)
+is the primary value.

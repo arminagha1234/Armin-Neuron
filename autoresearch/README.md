@@ -29,9 +29,12 @@ experiments and a better model.
 
 ## Why Trainium?
 
-At **$2.23/hr** (trn2.3xlarge) vs **$32.77/hr** (p5.48xlarge / H100):
+At **$2.23/hr** (trn2.3xlarge) vs **$4.10/hr** (p5.xlarge / 1× H100):
 - 100 experiments × 5 min = 8.3 hours
-- **Trainium: $18.50 overnight** vs H100: $272
+- **Trainium: $18.50 overnight** vs H100: $34
+- **45% cheaper per hour** for single-device training
+- For parallel sweeps: trn2.48xlarge ($21.50/hr, 32 logical cores)
+  runs 32 experiments simultaneously = **$0.006 per experiment**
 - MFU scales with model size (14.1% at 200M; expect 20%+ at 300M+)
 - Per-block compilation means no model size limit on a single core
 
