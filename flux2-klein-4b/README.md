@@ -10,15 +10,15 @@ vLLM). The cost story beats H100 at scale.
 
 ## Cost comparison vs H100
 
-| Configuration | $/image | vs H100 ($0.0073) | Status |
-|---|---:|---:|---|
-| **trn2.48xl + prompt cache + 4 steps** (model's intended use) | **$0.0016** | **78% CHEAPER** ✅ | measured |
-| **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ | **measured** (32.9s avg) |
-| **trn2.48xl + prompt cache + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ | measured |
-| **trn2.48xl + prompt cache + 28 steps** | **$0.0060** | **18% CHEAPER** ✅ | measured |
-| trn2.48xl × 16 cores (28 steps, no caching) | $0.0068 | 7% cheaper ✅ | **measured** |
-| trn2.48xl × 4 cores (28 steps) | $0.0091 | 1.24× more expensive | **measured** |
-| trn2.3xl batch parallel (28 steps) | $0.024 | 3.3× more expensive | **measured** |
+| Configuration | $/image | vs H100 ($0.0073) |
+|---|---:|---:|
+| **trn2.48xl + prompt cache + 4 steps** (model's intended use) | **$0.0016** | **78% CHEAPER** ✅ |
+| **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ |
+| **trn2.48xl + prompt cache + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ |
+| **trn2.48xl + prompt cache + 28 steps** | **$0.0060** | **18% CHEAPER** ✅ |
+| trn2.48xl × 16 cores (28 steps, no caching) | $0.0068 | 7% cheaper ✅ |
+| trn2.48xl × 4 cores (28 steps) | $0.0091 | 1.24× more expensive |
+| trn2.3xl batch parallel (28 steps) | $0.024 | 3.3× more expensive |
 
 (H100: single GPU at $4.326/hr = $0.0073/image at 28 steps.
 Trainium2: trn2.48xlarge $21.50/hr, trn2.3xlarge $2.23/hr.)
