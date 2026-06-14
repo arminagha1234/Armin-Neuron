@@ -1,0 +1,46 @@
+[W614 08:29:41.755488322 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+======================================================================
+Steps 6-11 bench — cheap wins
+======================================================================
+
+======================================================================
+CONFIG B: cheap_wins=True
+======================================================================
+
+=== loading pipe (cheap_wins=True) ===
+Loading pipeline components...:   0%|          | 0/5 [00:00<?, ?it/s]Loading pipeline components...:  20%|██        | 1/5 [00:00<00:02,  1.93it/s]
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s][ALoading weights: 100%|██████████| 398/398 [00:00<00:00, 8975.68it/s]
+Loading pipeline components...:  80%|████████  | 4/5 [00:00<00:00,  6.98it/s]Loading pipeline components...: 100%|██████████| 5/5 [00:00<00:00,  7.07it/s]
+[transformers] `CLIPImageProcessor` requires torchvision (not installed); falling back to `CLIPImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `CLIPImageProcessorPil` directly to silence this warning.
+[transformers] `SiglipImageProcessor` requires torchvision (not installed); falling back to `SiglipImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `SiglipImageProcessorPil` directly to silence this warning.
+  pipeline loaded                0.83 s
+  cheap wins applied (functional_rope=False)
+  NEURON_CC_FLAGS=(default)
+  [capture call]
+  0%|          | 0/4 [00:00<?, ?it/s] 25%|██▌       | 1/4 [01:28<04:25, 88.41s/it] 50%|█████     | 2/4 [02:31<02:26, 73.49s/it] 75%|███████▌  | 3/4 [02:32<00:40, 40.39s/it]100%|██████████| 4/4 [02:33<00:00, 24.83s/it]100%|██████████| 4/4 [02:33<00:00, 38.36s/it]
+  capture call: 182.25 s
+  [5 warm runs]
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+    run 0: 7.67 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+    run 1: 7.81 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+    run 2: 7.80 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+    run 3: 7.84 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+    run 4: 7.85 s
+  quality: std=18.15
+
+======================================================================
+CHEAP WINS SUMMARY
+======================================================================
+Config B: warm avg 7.79s  min 7.67s  std=18.15
+
+(Compare B against Phase A baseline 6.86s: -0.93s)
