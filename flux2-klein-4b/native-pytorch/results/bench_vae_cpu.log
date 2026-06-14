@@ -1,0 +1,39 @@
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py:205: UserWarning: The `local_dir_use_symlinks` argument is deprecated and ignored in `hf_hub_download`. Downloading to a local directory does not use symlinks anymore.
+  warnings.warn(
+================================================================
+VAE decode CPU optimization bench (FLUX.2-klein-4B)
+================================================================
+latent: (1, 32, 128, 128), host threads=96
+
+[A] baseline (CPU bf16, current production)
+  baseline                                   4397.5 ms  (min 4213)
+[B] enable_tiling()
+  tiling                                     4605.8 ms  (min 4529)
+[C] enable_slicing()
+  slicing                                    4440.5 ms  (min 4284)
+[D] channels_last memory format
+  channels_last                              2362.9 ms  (min 2261)
+[E] thread count sweep
+  threads=32                                 4652.1 ms  (min 4559)
+  threads=16                                 6238.6 ms  (min 6217)
+  threads=64                                 4219.9 ms  (min 4041)
+[F] fp32 decode
+  fp32                                       6720.2 ms  (min 6617)
+[F2] fp32 + tiling
+  fp32+tiling                                6882.5 ms  (min 6644)
+
+================================================================
+SUMMARY (VAE decode, lower is better)
+================================================================
+  D_channels_last            2362.9 ms   1.86x vs baseline ← BEST
+  E_threads_64               4219.9 ms   1.04x vs baseline
+  A_baseline                 4397.5 ms   1.00x vs baseline
+  C_slicing                  4440.5 ms   0.99x vs baseline
+  B_tiling                   4605.8 ms   0.95x vs baseline
+  E_threads_32               4652.1 ms   0.95x vs baseline
+  E_threads_16               6238.6 ms   0.70x vs baseline
+  F_fp32                     6720.2 ms   0.65x vs baseline
+  F2_fp32_tiling             6882.5 ms   0.64x vs baseline
+
+If best beats baseline, end-to-end 6.86s improves by ~2.03s

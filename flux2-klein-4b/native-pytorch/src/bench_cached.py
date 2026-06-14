@@ -31,6 +31,7 @@ from neuron_flux2_klein_native import NeuronFlux2KleinPipeline
 
 # Toggle: set via --vae-on-neuron to test Variant 4 (Phase A + VAE on Neuron)
 VAE_ON_NEURON = "--vae-on-neuron" in sys.argv
+VAE_CHANNELS_LAST = "--vae-channels-last" in sys.argv
 
 
 def neuron_sync():
@@ -129,6 +130,8 @@ def main():
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--vae-on-neuron", action="store_true",
                     help="Variant 4: Phase A caching + VAE on Neuron per-block")
+    ap.add_argument("--vae-channels-last", action="store_true",
+                    help="Variant 5: Phase A caching + CPU VAE channels_last")
     args = ap.parse_args()
 
     print("=" * 70)
@@ -158,6 +161,9 @@ def main():
         pipe.vae.to(device)
         nvae = vpb.compile_vae_decoder_per_block(pipe.vae)
         print(f"  VAE on Neuron, per-block compiled ({nvae} submodules)")
+    elif VAE_CHANNELS_LAST:
+        pipe.vae = pipe.vae.to(memory_format=torch.channels_last)
+        print(f"  CPU VAE converted to channels_last")
     neuron_sync()
     print(f"  apply patches + transformer.to(neuron) {time.time()-t0:.2f} s")
 
