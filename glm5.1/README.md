@@ -11,6 +11,13 @@ production serving path for large MoE models. End-to-end inference is
 **validated for partial models** (2 and 30 layers) — full 78-layer model
 is blocked on FP8-on-device weight storage (see Status below).
 
+> ⚠️ **THIS IS A BASELINE — WE CAN IMPROVE IT SUBSTANTIALLY.**
+> These are first-light bring-up numbers on BF16-dequantized weights with
+> no MoE-specific optimizations yet. The biggest lever (FP8-on-device
+> weight storage) is not applied. Treat the numbers as a floor — the
+> optimization roadmap in `vllm-neuron/BENCHMARK.md` lays out a path to
+> 3×+ improvement.
+
 | Path | Status | Best for |
 |---|---|---|
 | **vllm-neuron/** | ✅ partial (30 layers, TP=32, ~3.3s TTFT) | Production serving (the goal) |

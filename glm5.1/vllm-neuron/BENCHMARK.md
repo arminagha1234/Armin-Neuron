@@ -1,95 +1,105 @@
 # GLM 5.1 — TTFT Benchmark on Trainium2 (vLLM-Neuron)
 
+> ⚠️ **THIS IS A BASELINE — WE CAN IMPROVE IT SUBSTANTIALLY.**
+> The numbers below are a first-light bring-up of GLM 5.1 on Trainium2
+> using BF16-dequantized weights and no MoE-specific optimizations.
+> The single biggest lever (FP8-on-device weight storage) is not yet
+> applied. Expect large gains once the optimization roadmap below is
+> executed. Treat these as a floor, not a representative result.
+
 **Date:** 2026-06-14
 **Instance:** trn2.48xlarge (us-east-2)
 **Container:** `concourse-release-28ce3c3:...vllm-neuron-private-beta-trn10-v5`
 **Stack:** vLLM-Neuron 0.19.0, transformers 5.12.0, neuronx-cc 2.25.3371
 **Model:** `mconcat/GLM-5.1-FP8-Dynamic` (754B FP8, 695 GB on disk)
-**dtype:** bfloat16 (FP8 weights dequant to BF16 during load)
-**Prompt:** `"The future of AI is"` → 16-token greedy completion
+**dtype:** bfloat16 (FP8 weights dequant to BF16 during load — see blocker)
+**Harness:** identical to `vllm-neuron-gemma4-31b/bench_ttft.py` (same
+unique-random-token prompts, streaming TTFT, median of N, same seq-len
+scan). Re-used byte-for-byte so numbers are directly comparable.
 
-## Headline numbers
+## Headline (baseline — improvable)
 
-| Config | Layers | TP | max_model_len | Load | TTFT | Notes |
-|---|---:|---:|---:|---:|---:|---|
-| Smoke | 2 | 2 | 128 | 81 s | **320 ms** | ✅ Generates output |
-| Partial | 30 | 32 | 128 | 13.3 min | **3,259 ms** | ✅ Generates output (gibberish — only 30/78 layers) |
-| Full | 78 | 32 | 64 | OOM @ layer 45 | — | ❌ BF16 weights at TP=32 = ~47 GB/core |
-| Full | 78 | 64 | — | — | — | ❌ `index_n_heads=32 % 64 != 0` |
-
-The 30-layer TTFT extrapolates linearly to roughly **8.5 s for full 78
-layers** — still ~17× over a typical 500 ms production TTFT target.
-Memory blocks us first; optimization comes after.
-
-## How TTFT scales with layers
-
-| Layers | TTFT (ms) | ms/layer |
-|---:|---:|---:|
-| 2 | 320 | 160 |
-| 30 | 3,260 | ~109 |
-| 78 (extrap) | ~8,500 | — |
-
-The per-layer cost drops as more layers fit because some constant
-overhead (input embedding, sampling, KV-cache setup) gets amortized.
-Beyond 30 layers the cost should plateau around 105–110 ms/layer
-under the current (BF16, no EP) configuration.
-
-## Comparison with prior NxDI attempt
-
-The earlier internal benchmark on NxDI:
-
-| Tool | Layers | TP | TTFT @ 256 tokens | Status |
+| Path | Layers | TP | TTFT | How measured |
 |---|---:|---:|---:|---|
-| **NxDI (prior)** | 78 | 64 | 1,340 ms | ⚠️ Compile died at 130/258 HLOs at 8K |
-| **vLLM-Neuron (this work)** | 30 | 32 | 3,260 ms | ✅ Compiles + generates |
+| Offline `LLM.generate` smoke | 2 | 2 | **320 ms** | direct generate (max_model_len 128) |
+| Offline `LLM.generate` | 30 | 32 | **3,259 ms** | direct generate (max_model_len 128) |
+| Served HTTP (gemma harness) | 30 | 32 | **blocked** | server won't start — see below |
+| Served HTTP (gemma harness) | 78 | 32 | **blocked** | weights don't fit at all |
 
-NxDI got TTFT numbers but couldn't complete an 8K-context compile
-(`neuronx-cc` exit 70). This vLLM-Neuron path **compiles cleanly** for
-the layers that fit — the blocker is HBM, not the compiler. The TTFT
-gap (vLLM 3,260 ms / 30 layers vs NxDI 1,340 ms / 78 layers @ TP=64)
-is mostly because we're at half the TP and have no EP/FP8 yet.
+The 30-layer offline TTFT of **3,259 ms** is the comparable baseline
+number. Extrapolated to the full 78 layers it implies roughly **8.5 s**
+TTFT — well over a 500 ms production target, which is exactly why the
+optimization roadmap matters.
 
-## Why it's slow (decomposition)
+## Why the served HTTP benchmark is blocked (important)
 
-At 30 layers, TP=32, BF16, no EP, the 3.26 s splits roughly into:
+We tried to run the *exact* Gemma 4 31B served harness (vLLM
+`vllm serve` + `bench_ttft.py` against the OpenAI endpoint). The server
+fails to finish compiling at **every** bucket size — including the
+smallest single `[256]` bucket — with:
 
-| Component | Approximate share | Why |
+```
+[NCC_EOOM002] Maximum peak HBM usage of 28.44GB exceeds HBM limit of
+24.00GB for Trn2. This consists of 1.50MB model constants,
+43.00GB I/O tensors, 6.89GB internal (scratchpad) tensors ...
+```
+
+Key insight: the **43 GB I/O-tensor figure is identical at bucket 256
+and bucket 4096**. It does NOT scale with sequence length, so it is
+not activation memory — it is the **BF16-expanded MoE expert weights**
+being materialized as graph I/O on each core. At 30 layers × 256
+experts, dequantized to BF16, that's ~43 GB/core — far past the 24 GB
+Trn2 budget. No bucket-size tuning can fix this.
+
+The offline `LLM.generate` path *does* run at 30 layers because it uses
+a smaller `max_model_len` (128) and a different graph-capture path that
+doesn't materialize all expert weights as simultaneous graph I/O.
+
+**Conclusion: the served path needs FP8-on-device weights to fit at all.
+The 3,259 ms offline number is our honest baseline until then.**
+
+## Gemma 4 31B comparison (for context — NOT apples-to-apples yet)
+
+| Model | Served TTFT @ ~256 | Notes |
 |---|---:|---|
-| MLA attention | ~15% | Q-LoRA + KV-LoRA compute, fits well on Neuron |
-| MoE routing + dispatch | ~50% | Top-8 over 256 experts per token, all replicated |
-| MoE expert compute | ~25% | 8 experts active per token, BF16 matmuls |
-| DSA indexer + topk | ~5% | Already using NKI topk kernel (`Optimal tile size: 64`) |
-| Other (embed/norm/sample) | ~5% | Small constants |
+| Gemma 4 31B (dense, served, multi-bucket) | ~102 ms | dense 31B, fits cleanly |
+| GLM 5.1 (754B MoE, offline, 30/78 layers) | 3,259 ms | partial model, BF16 dequant, no EP |
 
-The MoE routing dominance is the same finding as NxDI — the unoptimized
-routing path is the main TTFT cost. Adding EP cuts the all-replicated
-expert overhead 4–8×, which is the biggest single optimization.
+Gemma 4 is a 31B dense model that fits and serves cleanly. GLM 5.1 is a
+754B MoE — a fundamentally heavier model — and these baseline numbers
+reflect a not-yet-optimized bring-up, not the achievable steady state.
 
-## Optimization roadmap
+## Why it's slow / why it doesn't fit (decomposition)
 
-| # | Optimization | Effort | Expected TTFT win |
+| Issue | Cause | Fix |
+|---|---|---|
+| Weights don't fit served | FP8 → BF16 dequant on load, 2× HBM | **FP8-on-device storage** |
+| TTFT high | MoE routing replicated on every rank | **Expert parallelism (EP)** |
+| TP capped at 32 | `index_n_heads=32` not divisible by 64 | indexer-aware sharding |
+| Routing overhead | unoptimized top-8 over 256 experts | NKI selection-bias router |
+
+## Optimization roadmap (what "improve" means)
+
+| # | Optimization | Effort | Expected effect |
 |---|---|---|---|
-| 1 | **FP8-on-device weights** (unblock full 78 layers) | 1–2 days | Allows the rest |
-| 2 | **EP=8** (distribute 256 experts across 8 rank-groups) | 1 day | 3–4× on MoE part (~50% total) |
+| 1 | **FP8-on-device weights** | 1–2 days | Unblocks served path + full 78 layers (halves weight HBM) |
+| 2 | **Expert parallelism EP=8** | 1 day | 3–4× on the MoE share of TTFT |
 | 3 | **NKI selection-bias router** | 2–3 days | 1.5–2× on routing |
-| 4 | **Multi-bucket compile** for 256/512/1K/2K/4K | 1 day | Avoids the cliff seen in Gemma 4 |
-| 5 | **DSA full pipeline** (Phase 2) | 2 days | Big win at ≥4K seq |
+| 4 | **Multi-bucket compile** | 1 day | Cuts effective TTFT on a real payload mix (Gemma saw −41%) |
+| 5 | **DSA full pipeline** | 2 days | Big win at ≥4K context |
 
-Realistic combined target after #1–#3: ~1.0 s TTFT @ 1K tokens, ~2.5 s
-@ 8K. Still over 500 ms, so this remains a serving option for
-non-latency-critical agentic workloads, not a real-time chat backend.
+Realistic post-#1–#3 target: ~1.0 s TTFT @ 1K tokens — a 3×+ improvement
+over this baseline, and the starting point for hitting production
+latency goals.
 
-## Cost (rough)
-
-trn2.48xlarge on-demand: ~$21.50/hr.
-At 30 layers serving: 13.3 min compile (cold start) + amortized over
-infinite serves. Once compiled, TTFT is the only cost surface.
-
-## Reproduction
-
-See the parent `README.md` for the full setup. Key commands:
+## Reproduction (offline 30-layer baseline — known working)
 
 ```bash
 sudo docker exec -e NEURON_RT_VIRTUAL_CORE_SIZE=2 -e NEURON_SKIP_EFA_AFFINITY=1 \
-  vllm_glm5 python /tmp/serve_glm5.py --num-hidden-layers 30 --tp 32
+  vllm_glm5 python /work/serve_glm5.py --num-hidden-layers 30 --tp 32
+# → loads in ~13 min, TTFT ~3,259 ms, generates tokens
 ```
+
+The served HTTP harness (`bench/bench_ttft.py`) is included and is the
+exact Gemma 4 31B script; it will produce comparable numbers once the
+FP8-on-device weight fix lets the server start.
