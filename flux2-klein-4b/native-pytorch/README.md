@@ -13,16 +13,16 @@ This is the **lowest-latency path** for FLUX.2-klein on Trainium2.
 **Up to 78% cheaper than H100** for FLUX.2-klein-4B image generation on
 trn2.48xlarge in production serving.
 
-| Configuration | $/image | vs H100 ($0.0073) | Notes |
-|---|---:|---:|---|
-| **trn2.48xl + prompt cache + 4 steps** | **$0.0016** | **78% CHEAPER** ✅ | Derived from measured (32.9s - 25s text enc = ~8s) |
-| **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ | **MEASURED** (32.9s/img avg) |
-| **trn2.48xl + prompt cache + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ | High quality + fast |
-| **trn2.48xl + prompt cache + 28 steps** | **$0.0060** | **18% CHEAPER** ✅ | Maximum quality |
-| trn2.48xl × 16 cores (measured, no caching) | $0.0068 | 7% cheaper ✅ | As-benchmarked today |
-| trn2.48xl × 4 cores (low contention) | $0.0091 | 1.24× more expensive | Minimal CPU contention |
-| trn2.3xl batch parallel (2 cores) | $0.024 | 3.3× more expensive | Smallest instance option |
-| H100 single GPU @ $4.326/hr | $0.0073 | baseline | 6.1s per image |
+| Configuration | $/image | vs H100 ($0.0073) |
+|---|---:|---:|
+| **trn2.48xl + prompt cache + 4 steps** | **$0.0016** | **78% CHEAPER** ✅ |
+| **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ |
+| **trn2.48xl + prompt cache + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ |
+| **trn2.48xl + prompt cache + 28 steps** | **$0.0060** | **18% CHEAPER** ✅ |
+| trn2.48xl × 16 cores (28 steps, no caching) | $0.0068 | 7% cheaper ✅ |
+| trn2.48xl × 4 cores | $0.0091 | 1.24× more expensive |
+| trn2.3xl batch parallel (2 cores) | $0.024 | 3.3× more expensive |
+| H100 single GPU @ $4.326/hr | $0.0073 | baseline |
 
 **Why this works:** FLUX.2-klein-4B is already a distilled model (designed
 for 4-step generation). Each Trainium2 core runs at 960 ms/step for the
