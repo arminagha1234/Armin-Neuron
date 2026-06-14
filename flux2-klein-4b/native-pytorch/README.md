@@ -15,7 +15,8 @@ trn2.48xlarge in production serving.
 
 | Configuration | $/image | vs H100 ($0.0073) | Notes |
 |---|---:|---:|---|
-| **trn2.48xl + prompt cache + 4 steps** | **$0.0016** | **78% CHEAPER** ✅ | Model's intended operating point (already distilled) |
+| **trn2.48xl + prompt cache + 4 steps** | **$0.0016** | **78% CHEAPER** ✅ | Projected (prompt cache needs API fix) |
+| **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ | **MEASURED** (32.9s/img avg) |
 | **trn2.48xl + prompt cache + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ | High quality + fast |
 | **trn2.48xl + prompt cache + 28 steps** | **$0.0060** | **18% CHEAPER** ✅ | Maximum quality |
 | trn2.48xl × 16 cores (measured, no caching) | $0.0068 | 7% cheaper ✅ | As-benchmarked today |
