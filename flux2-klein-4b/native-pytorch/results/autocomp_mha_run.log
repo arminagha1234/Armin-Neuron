@@ -1,0 +1,78 @@
+[2026-06-14 16:59:17,503 INFO llm_utils.py:67 <module>] Keys available: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+[2026-06-14 16:59:17,503 INFO llm_utils.py:69 <module>] Keys unavailable: OPENAI_API_KEY, ANTHROPIC_API_KEY, TOGETHER_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_API_KEY
+[2026-06-14 16:59:18,188 INFO run_search.py:175 main] Output directory: output/built:trn2-nki1_trn-advanced-nki1_8_beam_iters2_Trainium_trn2.48xlarge_us-4-5-20251101-v1:0_do0.25_p2_c2_b2_score1_ms1_fgisa1_ex0.25
+[2026-06-14 16:59:18,192 INFO trn_eval.py:58 _ensure_platform_override] Auto-detected platform=trn2 from instance=trn2.48xlarge
+[2026-06-14 16:59:18,192 INFO search.py:150 create_backend_and_agents] Using built agent from /mnt/data/work/autocomp/autocomp/agent_builder/.built/trn2-nki1
+[2026-06-14 16:59:18,287 INFO built_agent.py:65 __init__] BuiltLLMAgent loaded from /mnt/data/work/autocomp/autocomp/agent_builder/.built/trn2-nki1: 25 ISA sections, 37 optimizations, 7 translate strategies, 13 code examples, fine_grained_isa=True, example_rate=0.25
+[2026-06-14 16:59:18,295 INFO built_agent.py:113 _load_cache] Loaded selection cache from output/built:trn2-nki1_trn-advanced-nki1_8_beam_iters2_Trainium_trn2.48xlarge_us-4-5-20251101-v1:0_do0.25_p2_c2_b2_score1_ms1_fgisa1_ex0.25/selection_cache_us.anthropic.claude-opus-4-5-20251101-v1:0.yaml (1 entries)
+[2026-06-14 16:59:18,295 INFO search.py:366 __init__] Loaded initial code from output/built:trn2-nki1_trn-advanced-nki1_8_beam_iters2_Trainium_trn2.48xlarge_us-4-5-20251101-v1:0_do0.25_p2_c2_b2_score1_ms1_fgisa1_ex0.25/candidates-iter-0
+[2026-06-14 16:59:18,296 INFO search.py:409 __init__] Initial code scores:
+[2026-06-14 16:59:18,296 INFO search.py:411 __init__] 0.845
+[2026-06-14 16:59:18,326 INFO search.py:726 init_wandb] Initialized wandb run, id: dummy-9h084ypw
+[2026-06-14 16:59:18,326 INFO search.py:1178 optimize] Iteration 1 of optimization:
+[2026-06-14 16:59:21,118 INFO built_agent.py:527 _select_code_examples] us.anthropic.claude-opus-4-5-20251101-v1:0 BuiltLLMAgent: code example selection for trn-advanced-nki1:8: 9/13 examples
+[2026-06-14 16:59:36,896 INFO llm_ensemble.py:155 propose_optimizations_parallel] Dynamically generated 11 new menu options across 1 candidates.
+[2026-06-14 16:59:54,277 INFO llm_agent.py:425 propose_optimizations_parallel] us.anthropic.claude-opus-4-5-20251101-v1:0: finished generating 2 plans for 1 candidates.
+[2026-06-14 16:59:54,278 INFO search.py:1296 optimize] Proposed 2 new optimization plans.
+[2026-06-14 16:59:54,278 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 75.9K, output: 2.7K, total: 78.5K | LLM time: 35.952s, eval time: 0.0s, total time: 35.952s
+[2026-06-14 17:00:16,630 INFO llm_agent.py:514 implement_code_parallel] us.anthropic.claude-opus-4-5-20251101-v1:0: finished generating 4 code responses for 2 plans.
+[2026-06-14 17:00:16,632 INFO search.py:1324 optimize] Generated 4 implementations from 2 plans.
+[2026-06-14 17:00:16,632 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 124.8K, output: 13.1K, total: 138.0K | LLM time: 58.305s, eval time: 0.0s, total time: 58.306s
+[2026-06-14 17:00:16,633 INFO trn_eval.py:909 _try_combined_evaluation] Phase 1: compiling ref + 4 implementations in parallel
+[2026-06-14 17:00:17,915 INFO trn_eval.py:571 _compile_impls_parallel] Compile 3: FAILED
+[2026-06-14 17:00:17,958 INFO trn_eval.py:571 _compile_impls_parallel] Compile 2: FAILED
+[2026-06-14 17:00:17,959 INFO trn_eval.py:571 _compile_impls_parallel] Compile 0: FAILED
+[2026-06-14 17:00:17,990 INFO trn_eval.py:571 _compile_impls_parallel] Compile 1: FAILED
+[2026-06-14 17:01:00,057 INFO trn_eval.py:571 _compile_impls_parallel] Compile ref: OK
+[2026-06-14 17:01:00,058 INFO trn_eval.py:916 _try_combined_evaluation] Phase 1 complete: ref=OK, 0/4 implementation NEFFs saved
+[2026-06-14 17:01:00,058 INFO trn_eval.py:926 _try_combined_evaluation] Phase 2: correctness via libnrt
+[2026-06-14 17:01:20,072 ERROR trn_eval.py:965 _try_combined_evaluation] Code 0 failed correctness
+[2026-06-14 17:01:20,072 ERROR trn_eval.py:965 _try_combined_evaluation] Code 1 failed correctness
+[2026-06-14 17:01:20,072 ERROR trn_eval.py:965 _try_combined_evaluation] Code 2 failed correctness
+[2026-06-14 17:01:20,072 ERROR trn_eval.py:965 _try_combined_evaluation] Code 3 failed correctness
+[2026-06-14 17:01:20,073 INFO search.py:1357 optimize] Evaluated 4 implementations.
+[2026-06-14 17:01:20,073 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 124.8K, output: 13.1K, total: 138.0K | LLM time: 58.305s, eval time: 63.44s, total time: 121.747s
+[2026-06-14 17:01:20,073 INFO search.py:1470 optimize] Filtered down to 1 code candidates.
+[2026-06-14 17:01:20,073 INFO search.py:1473 optimize] Saved 0 improving code candidates to repository.
+[2026-06-14 17:01:20,073 INFO search.py:1482 optimize] New candidate scores:
+[2026-06-14 17:01:20,074 INFO search.py:1484 optimize] 0.845
+[2026-06-14 17:01:20,074 INFO search.py:448 _save_best_candidate] Best candidate score: 0.845 (saved to best_candidate_so_far.py)
+[2026-06-14 17:01:20,074 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 124.8K, output: 13.1K, total: 138.0K | LLM time: 58.305s, eval time: 63.44s, total time: 121.748s
+[2026-06-14 17:01:20,074 INFO search.py:1178 optimize] Iteration 2 of optimization:
+[2026-06-14 17:01:37,327 INFO llm_ensemble.py:155 propose_optimizations_parallel] Dynamically generated 10 new menu options across 1 candidates.
+[2026-06-14 17:01:53,676 INFO llm_agent.py:425 propose_optimizations_parallel] us.anthropic.claude-opus-4-5-20251101-v1:0: finished generating 2 plans for 1 candidates.
+[2026-06-14 17:01:53,676 INFO search.py:1296 optimize] Proposed 2 new optimization plans.
+[2026-06-14 17:01:53,677 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 167.8K, output: 15.8K, total: 183.6K | LLM time: 91.907s, eval time: 63.44s, total time: 155.35s
+[2026-06-14 17:02:21,406 INFO llm_agent.py:514 implement_code_parallel] us.anthropic.claude-opus-4-5-20251101-v1:0: finished generating 4 code responses for 2 plans.
+[2026-06-14 17:02:21,408 INFO search.py:1324 optimize] Generated 4 implementations from 2 plans.
+[2026-06-14 17:02:21,409 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 216.8K, output: 27.4K, total: 244.2K | LLM time: 119.639s, eval time: 63.44s, total time: 183.082s
+[2026-06-14 17:02:21,410 INFO trn_eval.py:909 _try_combined_evaluation] Phase 1: compiling ref + 4 implementations in parallel
+[2026-06-14 17:02:22,690 INFO trn_eval.py:571 _compile_impls_parallel] Compile 2: FAILED
+[2026-06-14 17:02:22,726 INFO trn_eval.py:571 _compile_impls_parallel] Compile 0: FAILED
+[2026-06-14 17:02:25,204 INFO trn_eval.py:571 _compile_impls_parallel] Compile 1: OK
+[2026-06-14 17:02:25,226 INFO trn_eval.py:571 _compile_impls_parallel] Compile ref: OK
+[2026-06-14 17:03:06,620 INFO trn_eval.py:571 _compile_impls_parallel] Compile 3: OK
+[2026-06-14 17:03:06,620 INFO trn_eval.py:916 _try_combined_evaluation] Phase 1 complete: ref=OK, 2/4 implementation NEFFs saved
+[2026-06-14 17:03:06,620 INFO trn_eval.py:926 _try_combined_evaluation] Phase 2: correctness via libnrt
+[2026-06-14 17:03:25,512 ERROR trn_eval.py:965 _try_combined_evaluation] Code 0 failed correctness
+[2026-06-14 17:03:25,512 ERROR trn_eval.py:965 _try_combined_evaluation] Code 2 failed correctness
+[2026-06-14 17:03:34,507 INFO trn_eval.py:265 _benchmark_via_neuron_profile] Code 1_combined neuron-profile total_time: 0.844 ms
+[2026-06-14 17:03:34,507 INFO trn_eval.py:980 _profile_one] Code 1 latency: 0.844
+[2026-06-14 17:03:43,188 INFO trn_eval.py:265 _benchmark_via_neuron_profile] Code 3_combined neuron-profile total_time: 0.844 ms
+[2026-06-14 17:03:43,188 INFO trn_eval.py:980 _profile_one] Code 3 latency: 0.844
+[2026-06-14 17:03:43,189 INFO search.py:1357 optimize] Evaluated 4 implementations.
+[2026-06-14 17:03:43,190 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 216.8K, output: 27.4K, total: 244.2K | LLM time: 119.639s, eval time: 145.22s, total time: 264.863s
+[2026-06-14 17:03:43,190 INFO search.py:1470 optimize] Filtered down to 2 code candidates.
+[2026-06-14 17:03:43,190 INFO search.py:1473 optimize] Saved 2 improving code candidates to repository.
+[2026-06-14 17:03:43,190 INFO search.py:1482 optimize] New candidate scores:
+[2026-06-14 17:03:43,190 INFO search.py:1484 optimize] 0.844
+[2026-06-14 17:03:43,190 INFO search.py:1484 optimize] 0.844
+[2026-06-14 17:03:43,190 INFO search.py:448 _save_best_candidate] Best candidate score: 0.844 (saved to best_candidate_so_far.py)
+[2026-06-14 17:03:43,191 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 216.8K, output: 27.4K, total: 244.2K | LLM time: 119.639s, eval time: 145.22s, total time: 264.864s
+[2026-06-14 17:03:43,191 INFO search.py:1131 _save_run_metrics] Token usage (cumulative) — input: 216.8K, output: 27.4K, total: 244.2K | LLM time: 119.639s, eval time: 145.22s, total time: 264.864s
+[2026-06-14 17:03:43,191 INFO search.py:1507 optimize] ============================================================
+[2026-06-14 17:03:43,191 INFO search.py:1508 optimize] Optimization complete. 2 iterations in 4.4 minutes.
+[2026-06-14 17:03:43,191 INFO search.py:1510 optimize] Initial score: 0.845
+[2026-06-14 17:03:43,191 INFO search.py:1512 optimize] Best score: 0.844
+[2026-06-14 17:03:43,191 INFO search.py:1514 optimize] Speedup: 1.00x
+[2026-06-14 17:03:43,191 INFO search.py:1515 optimize] ============================================================
