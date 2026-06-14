@@ -11,9 +11,9 @@ utilization (1.3× cost vs H100 $0.0010)
 
 | Step | Title | Status | Result | Time spent | Commit |
 |---|---|---|---|---:|---|
-| **1** | Lift NxDI FLUX architecture | 🟡 1.1 done (neg); 1.2 BLOCKED (no collective comms) | kernel-only 8.11s loss; TP=4 blocked by EFA/ENC | — | 7582ae1 |
-| 2 | FP8 weights (OCP→Neuron rescale) | ⏸️ deferred | needs TP=4 first (bandwidth win only matters when sharded) | — | — |
-| 3 | Context parallelism (TP=4 × CP=2) | ⛔ blocked | same collective-comms blocker as 1.2 | — | — |
+| **1** | Lift NxDI FLUX architecture | ✅ TP=4 built + tested | loop FASTER but comms overhead → 57s total (8× slower) | — | pending |
+| 2 | FP8 weights (OCP→Neuron rescale) | ⛔ moot | TP doesn't help klein-4B; FP8 was to stack on TP | — | — |
+| 3 | Context parallelism (TP=4 × CP=2) | ⛔ moot | same comms-overhead problem as TP=4, worse | — | — |
 | 4 | Fused MLP/o_proj/qkv kernels | ⏸️ deferred | DiT loop saturated single-rank; needs TP=4 | — | — |
 | 5 | NKI RoPE replacement | ⏸️ deferred | ~30ms, not worth it pre-TP | — | — |
 | 6 | RoPE precompute outside graph | ✅ already done | handled by Flux2PosEmbed patch in pipeline | — | — |
@@ -109,7 +109,143 @@ This is the multi-day task. Starting the scaffold now.
 - 2026-06-14 15:00: split into 1.1 (kernel swap) + 1.2 (TP=4 lift).
 - 2026-06-14 15:30: 1.1 code on box, compile starting.
 
-## Steps 6-11 — cheap wins (TESTED)
+## TP=4 UNBLOCKED (2026-06-14, third attempt — THE FIX)
+
+The earlier "collective-comms blocker" was a **missing import**, not an
+infra problem. The fix:
+
+```python
+import torch_neuronx              # registers PrivateUse1 device
+import torch_neuronx.distributed  # registers the `neuron` PG backend ← THIS
+```
+
+Without `torch_neuronx.distributed`, init_process_group(backend='neuron')
+and the collective ops fail with `ENC no_mesh`. With it (plus the
+collective env vars below), 2-rank and 4-rank all_reduce both PASS:
+
+```
+[rank 0] init_process_group OK in 12.2s
+[rank *] all_reduce result=[3,3,3,3] expected=3 OK=True   (2 ranks)
+[rank *] all_reduce result=[10,10,10,10] expected=10 OK=True  (4 ranks)
+```
+
+Working collective env (from gemma4_tp_sweep/capture_collective.sh):
+```bash
+NEURON_RT_VIRTUAL_CORE_SIZE=2
+NEURON_RT_NUM_CORES=<2*nproc>
+NEURON_SKIP_EFA_AFFINITY=1
+FI_PROVIDER=efa
+NEURON_RT_ROOT_COMM_ID=localhost:48620
+torchrun --nproc_per_node=4 --rdzv_backend c10d --rdzv_endpoint localhost:29503
+```
+
+The `NET/OFI aws-ofi-nccl initialization failed` warnings are NON-FATAL
+— the runtime falls back to intra-node transport and collectives work.
+
+**TP=4 is now the active path to sub-4s.** Building the TP=4 FLUX
+pipeline next.
+
+## TP=4 FLUX PIPELINE — WORKS, loop accelerated (2026-06-14)
+
+Built `flux2_tp_plan.py` (Colwise/Rowwise plan for 5 double + 20 single
+blocks) + `run_flux2_tp.py` (torchrun TP=4 runner) + extended
+`flux2_attention_cte.py` to patch both double- and single-stream
+processors.
+
+### Corrections found along the way
+- Real klein-4B arch (from transformer/config.json): **5 double + 20
+  single blocks, 24 heads, head_dim 128, inner_dim 3072, joint_dim 7680**
+  (NOT the 8/48/48/6144 the handoff/upstream-ref implied).
+- After Colwise sharding, single-stream processor splits the fused
+  projection by `attn.inner_dim`/`mlp_hidden_dim` — these must ALSO be
+  divided by world_size (fixed in apply_tp_fixes).
+
+### Two-stage debugging
+1. Default SDPA at TP=4: per-rank attention `[1,6,8704,128]` →
+   `NCC_INLA001 memory-out-of-bound` (8704×8704 score matrix can't fit
+   SBUF). **This is where attention_cte flash pays off** (flash-tiles
+   the sequence). Installed the kernel into both processors.
+2. With kernel: **compiles and runs, produces valid output**
+   (std=56.6, 10655 unique colors — a real detailed image).
+
+### The result (TP=4 + flash kernel, no caching yet)
+```
+first call (compile): 183.9s
+warm avg:             118.14s   ← total wall-clock
+  BUT denoising loop tqdm: 1.97-2.40 it/s
+```
+
+**KEY: the denoising loop ACCELERATED — 1.97-2.40 it/s vs single-rank
+1.37 it/s.** TP=4 genuinely speeds up the DiT compute (the 730ms/step
+floor dropped). The 118s total is CPU overhead: each of the 4 ranks
+runs the full text-encode + VAE + scheduler on CPU, AND there's no
+image-latent caching in the TP runner yet.
+
+### Next: add Phase A caching to the TP path
+The DiT loop win is real and proven. Now combine it with Phase A's
+CPU-side caching (prompt + image-latents) so total wall-clock reflects
+the faster loop instead of being swamped by 4× CPU work. Expected:
+loop ~1.5-2s + cached CPU ~4s = sub-6s, then optimize the CPU sharing.
+
+This is the first time ANY change moved the DiT loop off its floor.
+
+## TP=4 FINAL RESULT — loop accelerates but comms overhead dominates
+
+After adding Phase A image-latent + prompt caching to the TP=4 path:
+
+```
+TP=4 + flash kernel + caching:
+  first call (compile): 128.4s
+  warm avg:             57.15s   min: 55.66s
+  denoising loop:       ~2s (tqdm 1.97-2.40 it/s — FASTER than single-rank)
+  quality:              std=56.55 (valid detailed image, 10655 colors)
+```
+
+vs single-rank Phase A baseline: **6.86s**. TP=4 is **8× SLOWER overall**
+despite the faster loop.
+
+### Why TP=4 loses for klein-4B (the honest finding)
+
+The DiT denoising loop genuinely accelerated (730ms/step → ~500ms/step,
+~1s saved over 4 steps). But ~55s of per-call overhead swamps it:
+- VAE decode on CPU runs redundantly on all 4 ranks
+- Cached image-latents are DTensors needing cross-rank gather
+- Cross-rank collective barriers stall on every CPU-side boundary op
+- 4× the host-side Python/pipeline work
+
+**klein-4B is too small for TP=4 to pay off.** At inner_dim=3072,
+25 blocks, the per-layer compute saved by 4-way sharding (~1s total)
+is dwarfed by the all-reduce + redundant-CPU + sync overhead (~50s).
+TP wins for LARGE models (LTX-2 at 18.88B, where each layer's compute
+is huge relative to the fixed comms cost). For a 4B distilled model
+with a tiny 4-step loop, the comms tax exceeds the compute savings.
+
+The handoff projected TP → 3.5s, but that assumed comms overhead was
+negligible. Empirically, for THIS model size, it's the dominant cost.
+
+### Definitive conclusion for the customer
+
+**Ship the single-rank Phase A result: 6.86s / $0.0013/image.** It is
+the fastest configuration tested and is already H100-cost-competitive
+at full instance utilization (run 8 independent single-rank pipelines
+across the 32 logical cores for throughput, rather than 1 TP=4
+pipeline that's 8× slower per image).
+
+The lever the handoff identified (TP=4) was correctly identified as
+"the only thing with headroom on the DiT loop" — and it DOES accelerate
+the loop — but the end-to-end math doesn't work for a model this small.
+This is now empirically settled, not speculation.
+
+### What WOULD make TP=4 win (future, if needed)
+- A much larger model (klein-9B base, or future bigger DiT) where
+  per-layer compute >> comms cost
+- Moving VAE + text encoder fully onto Neuron (Phase B) so the CPU
+  overhead that dominates the TP path disappears — but Phase B's VAE
+  compile is itself blocked (NCC instruction limit)
+- Sequence parallelism instead of TP, to avoid the per-step all-reduce
+
+For fal.ai's 4B distilled model TODAY: single-rank + caching +
+throughput-scaling across cores is the right answer.
 
 **Status:** tested, net-negative or neutral on single-rank.
 

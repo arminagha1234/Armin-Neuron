@@ -231,6 +231,55 @@ def install_attention_cte_processor(transformer):
     Flux2AttnProcessor._attention_cte_installed = True
     Flux2AttnProcessor._original_call = orig_call
 
+    # Also patch the single-stream parallel self-attention processor.
+    _install_parallel_processor()
+
+
+def _install_parallel_processor():
+    """Patch Flux2ParallelSelfAttnProcessor (single-stream fused block) to
+    use attention_cte for the attention compute.
+    """
+    from diffusers.models.transformers.transformer_flux2 import (
+        Flux2ParallelSelfAttnProcessor,
+    )
+    from diffusers.models.embeddings import apply_rotary_emb
+
+    if getattr(Flux2ParallelSelfAttnProcessor, "_attention_cte_installed", False):
+        return
+    orig = Flux2ParallelSelfAttnProcessor.__call__
+
+    def patched_parallel_call(self, attn, hidden_states, attention_mask=None,
+                              image_rotary_emb=None):
+        # Fused QKV + MLP-in projection
+        hs = attn.to_qkv_mlp_proj(hidden_states)
+        qkv, mlp_hidden_states = torch.split(
+            hs,
+            [3 * attn.inner_dim, attn.mlp_hidden_dim * attn.mlp_mult_factor],
+            dim=-1,
+        )
+        query, key, value = qkv.chunk(3, dim=-1)
+        query = query.unflatten(-1, (attn.heads, -1))
+        key = key.unflatten(-1, (attn.heads, -1))
+        value = value.unflatten(-1, (attn.heads, -1))
+        query = attn.norm_q(query)
+        key = attn.norm_k(key)
+        if image_rotary_emb is not None:
+            query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
+            key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+
+        # Kernel-backed attention (flash-tiled for long seq)
+        attn_out = attention_cte_flux2(query, key, value, attn_mask=attention_mask)
+        attn_out = attn_out.flatten(2, 3).to(query.dtype)
+
+        # FF tail
+        mlp_hidden_states = attn.mlp_act_fn(mlp_hidden_states)
+        combined = torch.cat([attn_out, mlp_hidden_states], dim=-1)
+        return attn.to_out(combined)
+
+    Flux2ParallelSelfAttnProcessor.__call__ = patched_parallel_call
+    Flux2ParallelSelfAttnProcessor._attention_cte_installed = True
+    Flux2ParallelSelfAttnProcessor._original_call = orig
+
 
 def restore_default_attention(transformer=None):
     """Undo install_attention_cte_processor (for A/B benching)."""

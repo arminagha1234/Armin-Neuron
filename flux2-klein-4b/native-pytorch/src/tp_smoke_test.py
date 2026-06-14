@@ -26,6 +26,11 @@ import sys
 import time
 
 import torch
+# CRITICAL: importing torch_neuronx.distributed registers the `neuron`
+# ProcessGroup backend. Without this import, init_process_group(backend=
+# 'neuron') and the collective ops fail with ENC no_mesh errors.
+import torch_neuronx              # noqa: F401
+import torch_neuronx.distributed  # noqa: F401
 import torch.distributed as dist
 
 
