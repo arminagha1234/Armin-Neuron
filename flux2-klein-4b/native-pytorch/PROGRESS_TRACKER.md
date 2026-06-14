@@ -28,11 +28,18 @@ utilization (1.3× cost vs H100 $0.0010)
 | Milestone | Target | Actual | Delta from baseline |
 |---|---:|---:|---:|
 | Baseline (Phase A shipped) | — | **6.86 s** | 0 |
-| After Step 1 (NxDI lift) | ~3.5 s | TBD | -3.36 s |
-| After Step 2 (FP8) | ~2.9 s | TBD | -3.96 s |
-| After Step 3 (CP) | ~2.0 s | TBD | -4.86 s |
-| After Step 4 (fused kernels) | ~1.7 s | TBD | -5.16 s |
+| TP=4 (tested) | ~3.5 s | **57 s** | 8× WORSE (model too small) |
+| Throughput 8-worker | — | 13.3s/img, 0.6 img/s aggregate | host-CPU capped |
+| Phase B (VAE→Neuron) | ~4 s | BLOCKED | compiler instr limit |
 | H100 reference | ~0.9 s | — | — |
+
+**Honest customer numbers:** single-image 6.86s (7.6× H100), realistic
+throughput ~0.6 img/s on full instance (~$0.0099/img, ~10× H100). The
+shipped BENCHMARK doc's $0.0013/img assumed contention-free 32× scaling
+that doesn't hold — corrected in THROUGHPUT_FINDINGS.md. The one real
+remaining unlock is Phase B (VAE+encoder onto Neuron), which removes
+the host-CPU contention; it's compiler-blocked and the fix is per-block
+VAE compile.
 
 ## Step 1 — Lift NxDI FLUX architecture
 
