@@ -1,0 +1,67 @@
+[W614 06:32:02.837706408 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+======================================================================
+Phase B bench: VAE on Neuron + torch.compile
+======================================================================
+Model:  black-forest-labs/FLUX.2-klein-4B
+Config: 4 steps, guidance=1.0, 1024x1024, seed=42
+
+======================================================================
+CONFIG B: vae_on_neuron=True
+======================================================================
+
+=== loading pipe (vae_on_neuron=True) ===
+Loading pipeline components...:   0%|          | 0/5 [00:00<?, ?it/s]Loading pipeline components...:  80%|████████  | 4/5 [00:00<00:00,  6.98it/s]
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s][ALoading weights: 100%|██████████| 398/398 [00:00<00:00, 9110.04it/s]
+Loading pipeline components...: 100%|██████████| 5/5 [00:00<00:00,  7.00it/s]Loading pipeline components...: 100%|██████████| 5/5 [00:00<00:00,  6.99it/s]
+[transformers] `CLIPImageProcessor` requires torchvision (not installed); falling back to `CLIPImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `CLIPImageProcessorPil` directly to silence this warning.
+[transformers] `SiglipImageProcessor` requires torchvision (not installed); falling back to `SiglipImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `SiglipImageProcessorPil` directly to silence this warning.
+  pipeline loaded                0.83 s
+  patches + .to(neuron)          12.60 s
+  torch.compile applied to DiT + vae.decode + vae.encode
+  one-time prompt encode: 1.58 s
+  [capture call — populates caches, may compile NEFFs]
+  0%|          | 0/4 [00:00<?, ?it/s] 25%|██▌       | 1/4 [01:27<04:23, 87.67s/it] 50%|█████     | 2/4 [02:30<02:26, 73.29s/it] 75%|███████▌  | 3/4 [02:31<00:40, 40.28s/it]100%|██████████| 4/4 [02:32<00:00, 24.76s/it]100%|██████████| 4/4 [02:32<00:00, 38.21s/it]
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'upsampling.py:156'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/models/upsampling.py", line 156, in forward
+    if dtype == torch.bfloat16 and is_torch_version("<", "2.1"):
+
+  torch._dynamo.utils.warn_once(msg)
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'upsampling.py:180'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/models/upsampling.py", line 180, in forward
+    if dtype == torch.bfloat16 and is_torch_version("<", "2.1"):
+
+  torch._dynamo.utils.warn_once(msg)
+Traceback (most recent call last):
+  File "/mnt/data/work/flux2/bench_phase_b.py", line 237, in <module>
+    main()
+  File "/mnt/data/work/flux2/bench_phase_b.py", line 155, in main
+    out = pipe(prompt_embeds=prompt_embeds, image=input_image,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/pipelines/flux2/pipeline_flux2_klein.py", line 917, in __call__
+    image = self.image_processor.postprocess(image, output_type=output_type)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/image_processor.py", line 780, in postprocess
+    image = self.pt_to_numpy(image)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/image_processor.py", line 203, in pt_to_numpy
+    images = images.cpu().permute(0, 2, 3, 1).float().numpy()
+             ^^^^^^^^^^^^
+RuntimeError: Compilation error occurred on Neuron for operation=torch_compile;
+error message="COMPILATION FAILED: Command failed (neuronx-cc compilation) with exit code 70: 2026-06-14T07:01:18Z [INTERNAL_ERROR] [NCC_IXTP002] Number of instructions (11453027) is over the threshold (10000000). Tiling could potentially do a better job. - Please open a support ticket at https://github.com/aws-neuron/aws-neuron-sdk/issues/new. You may also be able to obtain more information using the 'XLA_IR_DEBUG' and 'XLA_HLO_DEBUG' environment variables."
+neff cache key=a22905643ab0ab5246a4c0d34a7d366f723a5a756be2f0d68eef397890a68769:386e61202970df4d475918e28fd235aaf757479f85985f45e32f0b695b571bf7
+Note: Neuron errors are reported asynchronously. The Python traceback shows where the
+error was detected (synchronization point), not necessarily where the failing operation
+was dispatched. For synchronous error reporting, set NEURON_LAUNCH_BLOCKING=1.

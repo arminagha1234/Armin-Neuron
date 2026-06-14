@@ -330,8 +330,20 @@ class NeuronFlux2KleinPipeline(Flux2KleinPipeline):
     Use the standard `__call__` for inference.
     """
 
-    def apply_neuron_patches(self, neuron_device: torch.device, dtype=torch.bfloat16):
-        """Apply the 8 Neuron patches in the right order. Idempotent."""
+    def apply_neuron_patches(self, neuron_device: torch.device,
+                             dtype=torch.bfloat16,
+                             vae_on_neuron: bool = False):
+        """Apply the Neuron patches in the right order. Idempotent.
+
+        Args:
+            neuron_device: target device, typically torch.device("neuron")
+            dtype: target compute dtype (bf16)
+            vae_on_neuron: if True, move the VAE to Neuron and skip the
+                CPU-coerce wrapper on vae.decode. Caller is then expected
+                to call torch.compile(backend="neuron") on vae.decode
+                (and optionally vae.encode) AFTER apply_neuron_patches.
+                Default False keeps the shipped behavior (VAE on CPU).
+        """
         # 1. Scheduler — CPU build then move + bf16 cast
         self.scheduler = _make_neuron_scheduler(self.scheduler, dtype)
         # 2. Timesteps modules (sin/cos table off device)
@@ -343,28 +355,37 @@ class NeuronFlux2KleinPipeline(Flux2KleinPipeline):
         # 5+8. Wrap the DiT (will keep params; .to(device) moves them)
         self.transformer = _NeuronTransformerWrapper(self.transformer)
         self._neuron_device = neuron_device
+        self._vae_on_neuron = vae_on_neuron
 
-        # 9. Patch VAE.decode to coerce its (Neuron-resident) latents
-        # input to CPU. The VAE itself stays on CPU.
-        _vae = self.vae
-        _orig_decode = _vae.decode
+        if not vae_on_neuron:
+            # 9. Patch VAE.decode to coerce its (Neuron-resident) latents
+            # input to CPU. The VAE itself stays on CPU.
+            _vae = self.vae
+            _orig_decode = _vae.decode
 
-        import functools as _ft
+            import functools as _ft
 
-        @_ft.wraps(_orig_decode)
-        def _patched_decode(z, *args, **kwargs):
-            if torch.is_tensor(z) and z.device.type != "cpu":
-                z = z.to(device="cpu")
-            return _orig_decode(z, *args, **kwargs)
+            @_ft.wraps(_orig_decode)
+            def _patched_decode(z, *args, **kwargs):
+                if torch.is_tensor(z) and z.device.type != "cpu":
+                    z = z.to(device="cpu")
+                return _orig_decode(z, *args, **kwargs)
 
-        _vae.decode = _patched_decode
+            _vae.decode = _patched_decode
+        # else: VAE will be moved to neuron in .to() and the caller is
+        # expected to torch.compile vae.decode / vae.encode.
         return self
 
     # ---- Selective device move ----
     def to(self, *args, **kwargs):
-        """Move ONLY the (wrapped) transformer; encoders + VAE stay on CPU."""
+        """Move the (wrapped) transformer to the device. If
+        ``vae_on_neuron=True`` was passed to apply_neuron_patches, the
+        VAE is also moved. Text encoder + tokenizer always stay on CPU.
+        """
         if self.transformer is not None:
             self.transformer.to(*args, **kwargs)
+        if getattr(self, "_vae_on_neuron", False) and self.vae is not None:
+            self.vae.to(*args, **kwargs)
         return self
 
     @property
@@ -425,12 +446,18 @@ class NeuronFlux2KleinPipeline(Flux2KleinPipeline):
     def _encode_vae_image(self, image, generator):
         if image.ndim != 4:
             raise ValueError(f"Expected image dims 4, got {image.ndim}.")
-        image_cpu = image.to(device="cpu")
+        # If VAE is on Neuron, route the encode through Neuron;
+        # otherwise force CPU (the shipped path).
+        if getattr(self, "_vae_on_neuron", False):
+            target = self._execution_device
+            image_in = image.to(device=target, dtype=torch.bfloat16)
+        else:
+            image_in = image.to(device="cpu")
         from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import (
             retrieve_latents,
         )
         image_latents = retrieve_latents(
-            self.vae.encode(image_cpu), generator=generator, sample_mode="argmax",
+            self.vae.encode(image_in), generator=generator, sample_mode="argmax",
         )
         image_latents = self._patchify_latents(image_latents)
         latents_bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(
