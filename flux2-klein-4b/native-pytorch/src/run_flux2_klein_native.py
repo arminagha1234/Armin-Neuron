@@ -16,8 +16,14 @@ Run inside the Beta 3 container:
         --lora <provider>/flux-2-klein-4B-zoom-lora \\
         --image /host/input_with_red_box.png \\
         --prompt "Zoom into the red highlighted area" \\
-        --steps 28 \\
+        --steps 4 \\
+        --guidance-scale 1.0 \\
         --output /host/zoomed.png
+
+NOTE: `FLUX.2-klein-4B` is the DISTILLED variant. Use steps=4 and
+guidance_scale=1.0 (canonical for the distilled model). The base
+research variant `FLUX.2-klein-base-4B` requires steps=50 and
+guidance_scale=4.0.
 """
 from __future__ import annotations
 
@@ -53,8 +59,12 @@ def main() -> None:
     ap.add_argument("--lora-scale", type=float, default=1.1)
     ap.add_argument("--image", required=False)
     ap.add_argument("--prompt", default="Zoom into the red highlighted area")
-    ap.add_argument("--steps", type=int, default=28)
-    ap.add_argument("--guidance-scale", type=float, default=3.5)
+    # FLUX.2-klein-4B is the DISTILLED variant: canonical config is
+    # num_inference_steps=4, guidance_scale=1.0 per BFL's HF model card.
+    # The base (non-distilled) variant is `FLUX.2-klein-base-4B` and uses
+    # ~50 steps at guidance ~4.0. Don't confuse the two.
+    ap.add_argument("--steps", type=int, default=4)
+    ap.add_argument("--guidance-scale", type=float, default=1.0)
     ap.add_argument("--height", type=int, default=1024)
     ap.add_argument("--width", type=int, default=1024)
     ap.add_argument("--seed", type=int, default=42)
