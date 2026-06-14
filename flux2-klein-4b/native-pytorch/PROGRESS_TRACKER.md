@@ -12,8 +12,8 @@ utilization (1.3× cost vs H100 $0.0010)
 | Step | Title | Status | Result | Time spent | Commit |
 |---|---|---|---|---:|---|
 | **1** | Lift NxDI FLUX architecture | ✅ TP=4 built + tested | loop FASTER but comms overhead → 57s total (8× slower) | — | pending |
-| 2 | FP8 weights (OCP→Neuron rescale) | ⛔ moot | TP doesn't help klein-4B; FP8 was to stack on TP | — | — |
-| 3 | Context parallelism (TP=4 × CP=2) | ⛔ moot | same comms-overhead problem as TP=4, worse | — | — |
+| 2 | FP8 weights (OCP→Neuron rescale) | ✅ auto-cast tested (✗); fp8-weights not run | auto-cast=fp8: 7.15s + ALL-BLACK output. fp8-weights: multi-day, low EV | — | pending |
+| 3 | Context parallelism (TP=4 × CP=2) | ⛔ not run | needs world_size=8 TP base which already loses | — | — |
 | **B** | **Phase B: VAE→Neuron per-block compile** | ✅ compiles, ✗ slower at 1024² | 3.8s Neuron vs 2.9s CPU → 7.73s total (0.87s slower) | — | pending |
 | 4 | Fused MLP/o_proj/qkv kernels | ⏸️ deferred | DiT loop saturated single-rank; needs TP=4 | — | — |
 | 5 | NKI RoPE replacement | ⏸️ deferred | ~30ms, not worth it pre-TP | — | — |
