@@ -14,7 +14,7 @@ utilization (1.3× cost vs H100 $0.0010)
 | **1** | Lift NxDI FLUX architecture | ✅ TP=4 built + tested | loop FASTER but comms overhead → 57s total (8× slower) | — | pending |
 | 2 | FP8 weights (OCP→Neuron rescale) | ⛔ moot | TP doesn't help klein-4B; FP8 was to stack on TP | — | — |
 | 3 | Context parallelism (TP=4 × CP=2) | ⛔ moot | same comms-overhead problem as TP=4, worse | — | — |
-| **B** | **Phase B: VAE→Neuron per-block compile** | ✅ **UNBLOCKED + WORKS** | **2.9s CPU → 0.945s Neuron (3.1×)** | — | pending |
+| **B** | **Phase B: VAE→Neuron per-block compile** | ✅ compiles, ✗ slower at 1024² | 3.8s Neuron vs 2.9s CPU → 7.73s total (0.87s slower) | — | pending |
 | 4 | Fused MLP/o_proj/qkv kernels | ⏸️ deferred | DiT loop saturated single-rank; needs TP=4 | — | — |
 | 5 | NKI RoPE replacement | ⏸️ deferred | ~30ms, not worth it pre-TP | — | — |
 | 6 | RoPE precompute outside graph | ✅ already done | handled by Flux2PosEmbed patch in pipeline | — | — |

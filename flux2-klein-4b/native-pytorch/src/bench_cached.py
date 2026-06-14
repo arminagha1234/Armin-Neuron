@@ -29,6 +29,9 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 from neuron_flux2_klein_native import NeuronFlux2KleinPipeline
 
+# Toggle: set via --vae-on-neuron to test Variant 4 (Phase A + VAE on Neuron)
+VAE_ON_NEURON = "--vae-on-neuron" in sys.argv
+
 
 def neuron_sync():
     if hasattr(torch, "neuron") and hasattr(torch.neuron, "synchronize"):
@@ -124,6 +127,8 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--prompt", default="Zoom into the red highlighted area")
     ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--vae-on-neuron", action="store_true",
+                    help="Variant 4: Phase A caching + VAE on Neuron per-block")
     args = ap.parse_args()
 
     print("=" * 70)
@@ -145,8 +150,14 @@ def main():
 
     t0 = time.time()
     device = torch.device("neuron")
-    pipe.apply_neuron_patches(device, dtype=torch.bfloat16)
+    pipe.apply_neuron_patches(device, dtype=torch.bfloat16,
+                              vae_on_neuron=VAE_ON_NEURON)
     pipe.transformer.to(device)
+    if VAE_ON_NEURON:
+        import flux2_vae_perblock as vpb
+        pipe.vae.to(device)
+        nvae = vpb.compile_vae_decoder_per_block(pipe.vae)
+        print(f"  VAE on Neuron, per-block compiled ({nvae} submodules)")
     neuron_sync()
     print(f"  apply patches + transformer.to(neuron) {time.time()-t0:.2f} s")
 
