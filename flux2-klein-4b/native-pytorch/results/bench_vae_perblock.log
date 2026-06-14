@@ -1,0 +1,39 @@
+[W614 14:11:37.811192426 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py:205: UserWarning: The `local_dir_use_symlinks` argument is deprecated and ignored in `hf_hub_download`. Downloading to a local directory does not use symlinks anymore.
+  warnings.warn(
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'upsampling.py:156'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/models/upsampling.py", line 156, in forward
+    if dtype == torch.bfloat16 and is_torch_version("<", "2.1"):
+
+  torch._dynamo.utils.warn_once(msg)
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'upsampling.py:180'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/models/upsampling.py", line 180, in forward
+    if dtype == torch.bfloat16 and is_torch_version("<", "2.1"):
+
+  torch._dynamo.utils.warn_once(msg)
+============================================================
+VAE per-block compile bench
+============================================================
+VAE loaded in 0.1s
+latent shape: (1, 32, 64, 64)
+
+[B] Neuron per-block compiled decode
+  compiled 5 decoder submodules
+  warmup (compile): 618.0s
+  run 0: 0.95s
+  run 1: 0.94s
+  run 2: 0.95s
+  run 3: 0.95s
+  run 4: 0.94s
+  avg: 0.945s
+  output: shape=(1, 3, 512, 512) std=0.107 on neuron:0
