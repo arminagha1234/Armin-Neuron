@@ -67,7 +67,8 @@ In rough effort order:
 **Ship Phase A** (already on GitHub at commit `a955dc5`) as the
 customer-facing result. It delivers a 5× wall-clock speedup
 (34.6 s → 6.86 s) and brings Trainium2 to 1.3× the cost of H100,
-which is a customer-shippable win for fal.ai's zoom-LoRA pattern.
+which is a customer-shippable win for a single-image-many-prompts
+zoom-LoRA pattern.
 
 Treat Phase B as a follow-up engineering project (option 1 first,
 option 3 if it doesn't unblock). Realistic week-of-work, not

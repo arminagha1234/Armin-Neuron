@@ -8,10 +8,21 @@ the Beta 3 stack. No NxDI, no vLLM — just native PyTorch and
 
 This is the **lowest-latency path** for FLUX.2-klein on Trainium2.
 
-## Headline result
+## Headline result (2026-06-14)
 
-**Up to 78% cheaper than H100** for FLUX.2-klein-4B image generation on
-trn2.48xlarge in production serving.
+**4.19 s warm at 1024×1024, 4-step distilled, lossless quality** (std
+18.16). 1.41× faster than the prior shipped 5.92 s baseline, ~10.5×
+cheaper $/image than H100 at a throughput-shaped marketplace workload.
+Win delivered by the **VAE-on-Neuron + PAVE fixes +
+mixed-flag** path enabled by `--vae-on-neuron`. See
+[`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md) for the
+A/B record.
+
+> Older $/image rows below reflect the prior 28-step bench; left for
+> historical comparison. Production now runs the distilled 4-step
+> config with `--vae-on-neuron --cache-image-latents`.
+
+## Legacy cost comparison (28-step, prior shipped path)
 
 | Configuration | $/image | vs H100 ($0.0073) |
 |---|---:|---:|

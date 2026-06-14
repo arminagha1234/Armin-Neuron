@@ -1,11 +1,30 @@
 # FLUX.2-klein-4B — Trainium2 vs H100 Benchmark
 
-**Date:** 2026-06-13 (Path A caching results added)
+**Date:** 2026-06-14 (VAE-on-Neuron + mixed-flag win added)
 **Model:** `black-forest-labs/FLUX.2-klein-4B` (DISTILLED variant)
 **Stack:** Beta 3 DLC, torch 2.11.0, torch_neuronx 2.11.3, neuronxcc 2.25, diffusers 0.38.0
 **Instance:** trn2.48xlarge (`i-0c2806a95b490e26e`), single core (LNC=2)
 **Input:** synthetic 1024×1024 photo with red region overlay
 **Prompt:** "Zoom into the red highlighted area"
+
+## Headline — 4-step distilled config (current production)
+
+| Path | Warm avg | Std | $/image @ 32-core trn2.48xl | vs H100 4-step (~0.9 s) |
+|---|---:|---:|---:|---:|
+| CPU VAE channels_last (prior shipped) | 5.92 s | 18.15 | ~$0.0011 | 6.6× slower latency |
+| **VAE on Neuron + PAVE fixes + mixed flags (NEW DEFAULT)** | **4.19 s** ✅ | **18.16** | **~$0.00078** | **~4.6× slower latency** |
+
+**Win: −29% end-to-end, lossless quality.** See
+[`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md) for the
+full A/B record (4 measured configurations) and the recipe.
+
+H100 4-step latency is extrapolated from a measured 28-step run
+(~0.218 s/step). A measured 4-step H100 baseline is a documented
+followup.
+
+---
+
+## Legacy 28-step bench (historical context)
 **Seed:** 42
 
 ## Headline
@@ -24,7 +43,7 @@ with H100** on FLUX.2-klein-4B image-to-image inference:
 DiT changes — pure CPU-side optimization. The cost gap to H100 closes
 from 6.5× to 1.3×.
 
-This is the customer-facing pattern for fal.ai's zoom-LoRA workload:
+This is the customer-facing pattern for a zoom-LoRA workload:
 one input image, many prompts/regions per session. Image-latent caching
 maps directly to that pattern and is now exposed in the production
 runner via `--cache-image-latents`.
@@ -61,7 +80,7 @@ Image-latent caching takes us from "5.6× more expensive than H100" to
   A/B prompt testing)
 - Batch generation from a template image
 - Interactive tools where the user uploads once and tweaks parameters
-- Most fal.ai zoom-LoRA workloads
+- Most zoom-LoRA workloads
 
 ❌ **Don't use it when:**
 - Every call has a different input image (image-latents would be stale)
@@ -105,7 +124,7 @@ Trainium2 cost gap to H100: 1.3× (was 6.5× before Path A)
 ```
 
 For workloads where the same image is reused across many calls
-(fal.ai's zoom-LoRA), Trainium2 + image-latent caching is **functionally
+(zoom-LoRA-style), Trainium2 + image-latent caching is **functionally
 at H100 cost parity**.
 
 ## Why this changes the customer story
@@ -117,7 +136,7 @@ Before this run:
 
 After this run:
 > "Trainium2 with image-latent caching is **1.3× the cost of H100** on
-> fal.ai's zoom-LoRA workload. The single-call number (34s → 7s) is
+> a zoom-LoRA workload. The single-call number (34s → 7s) is
 > dominated by an opt-in CPU-side cache, not a DiT-side optimization."
 
 ## Quality verification

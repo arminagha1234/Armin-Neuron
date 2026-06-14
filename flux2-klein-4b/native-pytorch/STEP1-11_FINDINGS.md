@@ -163,7 +163,7 @@ the whole TP=4 path.
 
 **Ship the 6.86s / $0.0013/image Phase A result.** It is already
 cost-competitive with H100 ($0.0010/image) at full instance
-utilization, and on fal.ai's zoom-LoRA workload (one image, many
+utilization, and on the customer's zoom-LoRA workload (one image, many
 prompts) it's the right shape.
 
 For latency parity (sub-4s), schedule the TP=4 work as a dedicated

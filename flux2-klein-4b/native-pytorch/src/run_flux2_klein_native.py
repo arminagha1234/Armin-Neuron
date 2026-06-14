@@ -81,11 +81,13 @@ def main() -> None:
     )
     ap.add_argument(
         "--vae-on-neuron", action="store_true",
-        help="EXPERIMENTAL / NOT RECOMMENDED. Moves the VAE to Neuron with "
-             "per-block decoder compile. Measured SLOWER at 1024 (3.8s vs "
-             "2.0s CPU channels_last) AND quality-degraded (std 14.6 vs "
-             "18.1) because it lacks the PatchedGroupNorm bf16 fix. Use "
-             "--vae-channels-last instead.",
+        help="RECOMMENDED. Run VAE encode + decode on Neuron with the "
+             "PAVE-derived fixes (gather-free upsamples + fp32 GroupNorm) "
+             "and a mixed-flag VAE compile (--model-type=unet-inference "
+             "for VAE only, transformer for the DiT). Measured 4.19s "
+             "warm at 1024 vs 5.92s on the CPU-VAE channels_last path "
+             "(-29% end-to-end, std=18.16, gate PASS). "
+             "See MIXED_FLAG_VAE_NEURON_WIN.md.",
     )
     ap.add_argument(
         "--vae-channels-last", action="store_true",
@@ -124,6 +126,25 @@ def main() -> None:
     print(f"[stage] applying neuron patches")
     pipe.apply_neuron_patches(device, dtype=torch.bfloat16,
                               vae_on_neuron=args.vae_on_neuron)
+
+    if args.vae_on_neuron:
+        # PAVE-derived fixes: gather-free upsamples + fp32 GroupNorm.
+        # Required for the Neuron VAE to be FAST and CORRECT — without
+        # them, the bare per-block compile path was both slower AND
+        # quality-degraded (std 14.6 vs 18.1). With them: 4.19s warm
+        # end-to-end, std 18.16. See MIXED_FLAG_VAE_NEURON_WIN.md.
+        import flux2_vae_neuron_fixes as vfix
+        s = vfix.apply_vae_neuron_fixes(pipe.vae, fp32_storage=False)
+        print(f"[stage] VAE fixes applied: {s}")
+        # Mixed-flag VAE compile: --model-type=unet-inference is set
+        # via NEURON_CC_FLAGS for every vae.encode/vae.decode call,
+        # both at compile time AND warm time (so cache lookups match).
+        # The DiT keeps the default --model-type=transformer flag,
+        # which is the proven winner on transformer workloads
+        # (A/B: 5.92s vs 7.71s under unet-inference, 1.3x slower).
+        vfix.install_mixed_flag_wrapper(pipe.vae)
+        print(f"[stage] VAE mixed-flag wrapper installed "
+              f"(VAE compiles under --model-type=unet-inference)")
 
     if args.vae_channels_last and not args.vae_on_neuron:
         # CPU VAE decode is conv-heavy; channels_last (NHWC) hits the

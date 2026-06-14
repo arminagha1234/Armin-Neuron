@@ -55,7 +55,7 @@ Every Neuron-side lever has now been empirically tested:
 **6.86s single-rank Phase A is the empirical optimum for FLUX.2-klein-4B
 on Trainium2.** This is now exhaustively verified — not a guess.
 
-## What this means for fal.ai (final, honest)
+## What this means for the customer (final, honest)
 
 - **Single-image latency: 6.86s** (7.6× H100's ~0.9s)
 - **Throughput: ~0.6 img/s** on a full trn2.48xl (host-CPU capped)

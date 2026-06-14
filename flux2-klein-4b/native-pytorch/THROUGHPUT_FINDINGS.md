@@ -51,7 +51,7 @@ the gap.
 
 ## What this means for the customer (honest version)
 
-For fal.ai's FLUX.2-klein-4B on Trainium2 today:
+For the FLUX.2-klein-4B on Trainium2 today:
 - **Single-image latency: 6.86s** (vs H100 ~0.9s) — 7.6× slower
 - **Realistic throughput: ~0.6 img/s on a full trn2.48xl** (8 effective
   workers before CPU contention dominates)

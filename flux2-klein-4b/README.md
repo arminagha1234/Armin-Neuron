@@ -1,6 +1,9 @@
 # FLUX.2-klein-4B on AWS Trainium2
 
-**Up to 78% cheaper than H100** for production image generation.
+**Latest (2026-06-14): 4.19 s warm per image at 1024², lossless,**
+via VAE-on-Neuron + PAVE fixes + mixed-flag compile. **~10.5× cheaper
+$/image than H100** at a throughput-shaped marketplace workload (full
+trn2.48xl, 32 logical cores).
 
 [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
 is Black Forest Labs' fastest distilled 4B DiT — designed for 4-step
@@ -8,7 +11,11 @@ sub-second generation on GPU. On Trainium2, it runs end-to-end via
 `torch.compile(backend="neuron")` with native PyTorch (no NxDI, no
 vLLM). The cost story beats H100 at scale.
 
-## Cost comparison vs H100
+See
+[`native-pytorch/MIXED_FLAG_VAE_NEURON_WIN.md`](native-pytorch/MIXED_FLAG_VAE_NEURON_WIN.md)
+for the A/B record (4 measured configurations) and the recipe.
+
+## Cost comparison vs H100 (28-step legacy table — for historical context)
 
 | Configuration | $/image | vs H100 ($0.0073) |
 |---|---:|---:|
