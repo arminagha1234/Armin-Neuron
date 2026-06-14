@@ -15,13 +15,13 @@ utilization (1.3× cost vs H100 $0.0010)
 | 2 | FP8 weights (OCP→Neuron rescale) | ✅ auto-cast tested (✗); fp8-weights not run | auto-cast=fp8: 7.15s + ALL-BLACK output. fp8-weights: multi-day, low EV | — | pending |
 | 3 | Context parallelism (TP=4 × CP=2) | ⛔ not run | needs world_size=8 TP base which already loses | — | — |
 | **B** | **Phase B: VAE→Neuron per-block compile** | ✅ compiles, ✗ slower at 1024² | 3.8s Neuron vs 2.9s CPU → 7.73s total (0.87s slower) | — | pending |
-| 4 | Fused MLP/o_proj/qkv kernels | ⏸️ deferred | DiT loop saturated single-rank; needs TP=4 | — | — |
-| 5 | NKI RoPE replacement | ⏸️ deferred | ~30ms, not worth it pre-TP | — | — |
+| 4 | Fused MLP/o_proj/qkv kernels | ⛔ not run (re-scoped) | nkilib HAS them (not blocked); targets saturated loop, ≤6% ceiling, high risk | — | pending |
+| 5 | NKI RoPE replacement | ⛔ not run | ~30ms, sub-noise (±0.5s variance) | — | pending |
 | 6 | RoPE precompute outside graph | ✅ already done | handled by Flux2PosEmbed patch in pipeline | — | — |
 | 7 | requires_grad_(False) | ✅ tested | neutral (7.79s, loop unchanged) | — | 7582ae1 |
-| 8 | Functional rotate_half | ⏸️ skipped | interleaved RoPE still needs stack; minimal win | — | — |
+| 8 | Functional rotate_half | ⛔ not run | sub-noise + N/A (FLUX interleaved RoPE needs stack) | — | pending |
 | 9 | RMSNorm `.weight` | ✅ verified n/a | diffusers already uses .weight not .weight.data | — | 7582ae1 |
-| 10 | Verify single-NEFF compile | ⏸️ deferred | diagnostic; lower priority than TP blocker | — | — |
+| 10 | Verify single-NEFF compile | ✅ RAN | ZERO graph breaks — clean single NEFF, no fragmentation | — | pending |
 | 11 | --auto-cast=matmult flag | ✅ tested | net-negative (7.69s, added conversions) | — | 7582ae1 |
 
 ## Cumulative wall-clock target
