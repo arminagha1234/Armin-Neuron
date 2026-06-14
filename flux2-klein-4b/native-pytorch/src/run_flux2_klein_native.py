@@ -79,6 +79,12 @@ def main() -> None:
              "batch-from-template). DO NOT use when each call has a "
              "different input image.",
     )
+    ap.add_argument(
+        "--vae-on-neuron", action="store_true",
+        help="Phase B: move the VAE to Neuron and per-block compile the "
+             "decoder (~2.9s CPU → ~0.95s Neuron per image). Removes the "
+             "host-CPU VAE decode that caps throughput under concurrency.",
+    )
     args = ap.parse_args()
 
     print(f"[stage] loading {args.base_model} on CPU")
@@ -107,7 +113,8 @@ def main() -> None:
 
     device = torch.device("neuron")
     print(f"[stage] applying neuron patches")
-    pipe.apply_neuron_patches(device, dtype=torch.bfloat16)
+    pipe.apply_neuron_patches(device, dtype=torch.bfloat16,
+                              vae_on_neuron=args.vae_on_neuron)
 
     print(f"[stage] moving transformer to {device} (single-core eager)")
     t0 = time.time()
@@ -124,6 +131,16 @@ def main() -> None:
             pipe.transformer.inner, backend="neuron", dynamic=False,
         )
         print(f"[stage] compile decorator applied")
+
+    if getattr(args, "vae_on_neuron", False):
+        # Phase B: move VAE to Neuron + per-block compile the decoder.
+        # Removes ~2.9s of host-CPU decode per image (the throughput
+        # contention source). Per-block compile avoids NCC_IXTP002.
+        import flux2_vae_perblock as vpb
+        print(f"[stage] moving VAE to {device} + per-block compile")
+        pipe.vae.to(device)
+        n = vpb.compile_vae_decoder_per_block(pipe.vae)
+        print(f"[stage] compiled {n} VAE decoder submodules")
 
     # Build inputs
     if args.bench_only or args.image is None:

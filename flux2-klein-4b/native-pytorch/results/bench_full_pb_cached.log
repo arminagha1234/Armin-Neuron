@@ -1,0 +1,54 @@
+[W614 15:35:23.197933589 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+[stage] loading black-forest-labs/FLUX.2-klein-4B on CPU
+Loading pipeline components...:   0%|          | 0/5 [00:00<?, ?it/s]Loading pipeline components...:  20%|██        | 1/5 [00:00<00:02,  1.92it/s]
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s][ALoading weights: 100%|██████████| 398/398 [00:00<00:00, 9083.62it/s]
+Loading pipeline components...:  60%|██████    | 3/5 [00:00<00:00,  5.12it/s]Loading pipeline components...: 100%|██████████| 5/5 [00:00<00:00,  7.09it/s]
+[transformers] `CLIPImageProcessor` requires torchvision (not installed); falling back to `CLIPImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `CLIPImageProcessorPil` directly to silence this warning.
+[transformers] `SiglipImageProcessor` requires torchvision (not installed); falling back to `SiglipImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `SiglipImageProcessorPil` directly to silence this warning.
+[stage] pipeline loaded in 0.9s on CPU
+[stage] --no-lora set, skipping LoRA fuse
+[stage] applying neuron patches
+[stage] moving transformer to neuron (single-core eager)
+[stage] transformer on neuron in 14.0s
+[stage] applying torch.compile(backend='neuron') to inner DiT
+[stage] compile decorator applied
+[stage] moving VAE to neuron + per-block compile
+[stage] compiled 5 VAE decoder submodules
+[stage] no --image given; generating synthetic input (1024x1024) with red highlight box
+[stage] image-latent caching ENABLED — first call captures, subsequent calls reuse
+[stage] === first call (compiles 4-step graph) ===
+  0%|          | 0/4 [00:00<?, ?it/s] 25%|██▌       | 1/4 [01:27<04:21, 87.07s/it] 50%|█████     | 2/4 [02:29<02:25, 72.83s/it] 75%|███████▌  | 3/4 [02:30<00:40, 40.03s/it]100%|██████████| 4/4 [02:31<00:00, 24.61s/it]100%|██████████| 4/4 [02:31<00:00, 37.98s/it]
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'upsampling.py:156'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/models/upsampling.py", line 156, in forward
+    if dtype == torch.bfloat16 and is_torch_version("<", "2.1"):
+
+  torch._dynamo.utils.warn_once(msg)
+/opt/torch-neuronx/.venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'upsampling.py:180'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/opt/torch-neuronx/.venv/lib/python3.12/site-packages/diffusers/models/upsampling.py", line 180, in forward
+    if dtype == torch.bfloat16 and is_torch_version("<", "2.1"):
+
+  torch._dynamo.utils.warn_once(msg)
+[time] first call: 191.5 s
+[result] wrote /mnt/data/work/flux2/results/full_phaseb_cached.png ((1024, 1024))
+[stage] === second call (cached) ===
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+[time] cached: 9.2 s
+[time] per-step (cached): 2301 ms
+[result] wrote /mnt/data/work/flux2/results/full_phaseb_cached_cached.png
+
+=== SUMMARY ===
+  steps:               4
+  resolution:          1024x1024
+  first call (s):      191.5  (includes neuronx-cc compile)
+  cached call (s):     9.2
+  per-step (ms):       2301
