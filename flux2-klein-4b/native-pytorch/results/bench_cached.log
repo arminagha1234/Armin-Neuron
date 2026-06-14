@@ -1,0 +1,112 @@
+[W614 06:02:38.029405268 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+======================================================================
+Path A bench — caching breakdown
+======================================================================
+Model:  black-forest-labs/FLUX.2-klein-4B
+Config: 4 steps, guidance=1.0, 1024x1024, seed=42
+
+[setup]
+Loading pipeline components...:   0%|          | 0/5 [00:00<?, ?it/s]
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s][ALoading weights: 100%|██████████| 398/398 [00:00<00:00, 9416.63it/s]
+Loading pipeline components...:  20%|██        | 1/5 [00:00<00:00,  6.87it/s]Loading pipeline components...: 100%|██████████| 5/5 [00:00<00:00,  7.07it/s]Loading pipeline components...: 100%|██████████| 5/5 [00:00<00:00,  7.06it/s]
+[transformers] `CLIPImageProcessor` requires torchvision (not installed); falling back to `CLIPImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `CLIPImageProcessorPil` directly to silence this warning.
+[transformers] `SiglipImageProcessor` requires torchvision (not installed); falling back to `SiglipImageProcessorPil` for backward compatibility. Install torchvision to use the default backend, or import `SiglipImageProcessorPil` directly to silence this warning.
+  pipeline loaded                        0.84 s
+  apply patches + transformer.to(neuron) 12.01 s
+
+[warmup call (compiles or loads NEFF)]
+  0%|          | 0/4 [00:00<?, ?it/s] 25%|██▌       | 1/4 [01:26<04:20, 86.82s/it] 50%|█████     | 2/4 [02:29<02:25, 72.71s/it] 75%|███████▌  | 3/4 [02:30<00:39, 39.95s/it]100%|██████████| 4/4 [02:31<00:00, 24.56s/it]100%|██████████| 4/4 [02:31<00:00, 37.90s/it]
+  warmup wall-clock: 182.39 s
+  --- per-stage timings (warmup) ---
+    encode_prompt                              1507.4 ms
+    prepare_latents                              15.3 ms
+    _encode_vae_image                          2305.1 ms
+    prepare_image_latents                     24113.6 ms
+    scheduler.set_timesteps                       0.4 ms
+    vae.decode                                 4105.1 ms
+    (sum)                                     32046.7 ms
+
+[variant 1: no caching, 5 runs]
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 0: 34.03 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 1: 34.24 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.04it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 2: 35.26 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 3: 34.40 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 4: 35.01 s
+  --- per-stage timings (variant 1 (no caching)) ---
+    encode_prompt                              1456.9 ms
+    prepare_latents                              14.4 ms
+    _encode_vae_image                          2418.9 ms
+    prepare_image_latents                     24832.9 ms
+    scheduler.set_timesteps                       0.4 ms
+    vae.decode                                 4364.4 ms
+    (sum)                                     33087.9 ms
+  avg: 34.59 s   min: 34.03 s
+
+[variant 2: prompt_embeds cached, 5 runs]
+  one-time encode_prompt: 1.61 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 0: 30.90 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 1: 30.89 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.04it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 2: 31.13 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.04it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 3: 30.94 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 4: 30.89 s
+  --- per-stage timings (variant 2 (prompt cached)) ---
+    encode_prompt                                 1.7 ms
+    prepare_latents                              14.2 ms
+    _encode_vae_image                          1400.2 ms
+    prepare_image_latents                     24103.6 ms
+    scheduler.set_timesteps                       0.5 ms
+    vae.decode                                 2911.3 ms
+    (sum)                                     28431.5 ms
+  avg: 30.95 s   min: 30.89 s
+
+[variant 3: prompt + image_latents cached, 5 runs]
+  capturing image_latents from a one-time call...
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.04it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  captured in 30.92 s
+  image_latents shape: (1, 4096, 128) on neuron:0
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 0: 6.90 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 1: 6.89 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 2: 6.86 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 3: 6.92 s
+  0%|          | 0/4 [00:00<?, ?it/s] 50%|█████     | 2/4 [00:00<00:00,  2.05it/s] 75%|███████▌  | 3/4 [00:01<00:00,  1.45it/s]100%|██████████| 4/4 [00:02<00:00,  1.26it/s]100%|██████████| 4/4 [00:02<00:00,  1.37it/s]
+  run 4: 6.75 s
+  --- per-stage timings (variant 3 (prompt + image_latents cached)) ---
+    encode_prompt                                 0.7 ms
+    prepare_latents                              14.1 ms
+    scheduler.set_timesteps                       0.3 ms
+    vae.decode                                 2930.5 ms
+    (sum)                                      2945.5 ms
+  avg: 6.86 s   min: 6.75 s
+
+======================================================================
+PATH A SUMMARY
+======================================================================
+Variant 1 (no caching):                  34.59 s   (baseline)
+Variant 2 (prompt cached):               30.95 s   (+3.63 s, 1.12× faster)
+Variant 3 (prompt + image_latents):       6.86 s   (+27.72 s, 5.04× faster)
+
+Per-image cost on trn2.48xl ($21.50/hr, 32 logical cores):
+  Variant 1:  $0.0065 per image
+  Variant 2:  $0.0058 per image
+  Variant 3:  $0.0013 per image
+  H100 ref:   $0.0010 per image (4-step est.)

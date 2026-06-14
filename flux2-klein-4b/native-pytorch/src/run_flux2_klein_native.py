@@ -71,6 +71,14 @@ def main() -> None:
     ap.add_argument("--output", default="zoomed.png")
     ap.add_argument("--no-compile", action="store_true")
     ap.add_argument("--bench-only", action="store_true")
+    ap.add_argument(
+        "--cache-image-latents", action="store_true",
+        help="Cache image_latents from the first inference and reuse on "
+             "subsequent calls. Big win (~5× faster) when the same input "
+             "image is reused across many calls (zoom-LoRA, A/B prompts, "
+             "batch-from-template). DO NOT use when each call has a "
+             "different input image.",
+    )
     args = ap.parse_args()
 
     print(f"[stage] loading {args.base_model} on CPU")
@@ -135,6 +143,31 @@ def main() -> None:
             input_image = input_image.resize((args.width, args.height), Image.LANCZOS)
 
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
+
+    # If --cache-image-latents is set, hook prepare_image_latents to
+    # capture its output on the first call, then return the cached
+    # result on every call after that. Saves ~24s per call at
+    # 1024×1024 / 4-step (the VAE encode + patchify + batch-norm
+    # normalize is the dominant CPU cost).
+    image_latent_cache = {}
+    if args.cache_image_latents:
+        _orig_pil = pipe.prepare_image_latents
+
+        def _caching_prepare_image_latents(images, batch_size, generator,
+                                           device, dtype):
+            if "image_latents" in image_latent_cache:
+                return (
+                    image_latent_cache["image_latents"],
+                    image_latent_cache["image_latent_ids"],
+                )
+            out = _orig_pil(images, batch_size, generator, device, dtype)
+            image_latent_cache["image_latents"] = out[0]
+            image_latent_cache["image_latent_ids"] = out[1]
+            return out
+
+        pipe.prepare_image_latents = _caching_prepare_image_latents
+        print("[stage] image-latent caching ENABLED — first call captures, "
+              "subsequent calls reuse")
 
     print(f"[stage] === first call (compiles {args.steps}-step graph) ===")
     t0 = time.time()
