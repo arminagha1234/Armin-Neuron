@@ -11,17 +11,17 @@ utilization (1.3× cost vs H100 $0.0010)
 
 | Step | Title | Status | Result | Time spent | Commit |
 |---|---|---|---|---:|---|
-| **1** | Lift NxDI FLUX architecture | 🟡 1.1 done (neg), 1.2 in progress | 1.1 kernel-only: 8.11s (LOSS) | — | — |
-| 2 | FP8 weights (OCP→Neuron rescale) | ⏳ queued | — | — | — |
-| 3 | Context parallelism (TP=4 × CP=2) | ⏳ queued | — | — | — |
-| 4 | Fused MLP/o_proj/qkv kernels | ⏳ queued | — | — | — |
-| 5 | NKI RoPE replacement | ⏳ queued | — | — | — |
-| 6 | RoPE precompute outside graph | ⏳ queued | — | — | — |
-| 7 | requires_grad_(False) | ⏳ queued | — | — | — |
-| 8 | Functional rotate_half | ⏳ queued | — | — | — |
-| 9 | RMSNorm `.weight` (not `.weight.data`) | ⏳ queued | — | — | — |
-| 10 | Verify single-NEFF compile, fix breaks | ⏳ queued | — | — | — |
-| 11 | --auto-cast=matmult flag | ⏳ queued | — | — | — |
+| **1** | Lift NxDI FLUX architecture | 🟡 1.1 done (neg); 1.2 BLOCKED (no collective comms) | kernel-only 8.11s loss; TP=4 blocked by EFA/ENC | — | 7582ae1 |
+| 2 | FP8 weights (OCP→Neuron rescale) | ⏸️ deferred | needs TP=4 first (bandwidth win only matters when sharded) | — | — |
+| 3 | Context parallelism (TP=4 × CP=2) | ⛔ blocked | same collective-comms blocker as 1.2 | — | — |
+| 4 | Fused MLP/o_proj/qkv kernels | ⏸️ deferred | DiT loop saturated single-rank; needs TP=4 | — | — |
+| 5 | NKI RoPE replacement | ⏸️ deferred | ~30ms, not worth it pre-TP | — | — |
+| 6 | RoPE precompute outside graph | ✅ already done | handled by Flux2PosEmbed patch in pipeline | — | — |
+| 7 | requires_grad_(False) | ✅ tested | neutral (7.79s, loop unchanged) | — | 7582ae1 |
+| 8 | Functional rotate_half | ⏸️ skipped | interleaved RoPE still needs stack; minimal win | — | — |
+| 9 | RMSNorm `.weight` | ✅ verified n/a | diffusers already uses .weight not .weight.data | — | 7582ae1 |
+| 10 | Verify single-NEFF compile | ⏸️ deferred | diagnostic; lower priority than TP blocker | — | — |
+| 11 | --auto-cast=matmult flag | ✅ tested | net-negative (7.69s, added conversions) | — | 7582ae1 |
 
 ## Cumulative wall-clock target
 

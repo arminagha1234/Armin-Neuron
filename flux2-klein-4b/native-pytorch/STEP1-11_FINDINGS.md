@@ -90,6 +90,75 @@ TP-transformer fixes (TPRMSNorm, attn.heads patch, RoPE slice,
 functional RoPE) documented in the steering. Not an autonomous
 overnight task — process-group hangs need a human in the loop.
 
+### TP=4 smoke test attempted (2026-06-14, overnight)
+
+Per the "keep going" instruction, I attempted the smallest safe TP
+validation: a 2-rank all_reduce smoke test (`tp_smoke_test.py`), run
+under a hard 180s timeout so it could not wedge the box.
+
+Result: **`init_process_group(backend="neuron")` fails with**
+```
+NRT Execution error occurred on Neuron for operation=nki_kernel_global
+```
+Fallback to `backend="xla"` also fails ("Unknown backend type xla" —
+expected, xla isn't registered on Beta 3 native).
+
+This is a low-level Neuron RunTime multi-process error, not a Python
+PG-setup bug. Likely causes (need interactive debug):
+- Both ranks contending for the same cores (need explicit
+  `NEURON_RT_VISIBLE_CORES` per rank)
+- Leftover NEFF/runtime state from the single-process runs
+- The beta3 container's runtime not configured for multi-process
+  rendezvous out of the box
+
+The box was protected by the timeout — no zombie processes, cores
+healthy after. **This confirms TP=4 needs an interactive session**:
+the very first multi-rank step (process group init) fails in a way
+that needs hands-on runtime debugging, exactly as flagged. Stopping
+the autonomous attempt here was the right call — going further
+(scaling to 4 ranks, loading the full model) would have risked
+wedging the box with no recovery until morning.
+
+Next interactive session should start with:
+1. Get `tp_smoke_test.py` 2-rank all_reduce passing first
+   (likely needs per-rank `NEURON_RT_VISIBLE_CORES=0,1` / `2,3`)
+2. Only then scale to the full model TP=4 lift
+
+### ROOT CAUSE FOUND (2026-06-14, second smoke attempt)
+
+Retried with explicit per-rank `NEURON_RT_VISIBLE_CORES` (0-1 / 2-3)
+and LNC=2. The all_reduce now gets past PG init and fails at the
+**collective-communication layer**:
+
+```
+NET/OFI aws-ofi-nccl initialization failed ... is EFA enabled?
+OFI plugin initNet() failed
+ENC:enc_init_comm failed (2) to init a collective algorithm.
+  reason: no_hier no_mesh replica-group: [0,1]
+NRT:nrt_barrier The barrier execution has failed on LNC: 0, worker: 1/2
+```
+
+**The cross-core collective stack (EFA / aws-ofi-nccl / NeuronLink ENC)
+is not initialized in this beta3 container.** TP all_reduce can't form
+a replica group because the network plugin fails to init. This is an
+infra/container-config blocker, not a model-code bug:
+- The container needs EFA enabled, or
+- The right `FI_EFA_*` / `FI_PROVIDER` env vars, or
+- The aws-ofi-nccl plugin installed + configured for intra-node
+  NeuronLink collectives
+
+**Definitive conclusion: TP=4 is blocked on this box by missing
+collective-comms setup.** It's not a code problem we can solve by
+writing a better TP plan — the hardware comms layer the all_reduce
+needs isn't wired up in this container. Fixing it is an interactive
+infra task (enable EFA / configure OFI), after which the 2-rank smoke
+test must pass before any model work.
+
+This is genuinely good to know: it means the earlier single-rank
+saturation finding isn't the whole story — TP is the lever, but the
+lever is bolted down by container config. One clear infra fix unblocks
+the whole TP=4 path.
+
 ## Recommendation for the customer
 
 **Ship the 6.86s / $0.0013/image Phase A result.** It is already
