@@ -13,16 +13,17 @@ single Trainium2 logical core at 512×512 but **OOMs at 1024×1024**
 | Configuration | $/image | vs H100 |
 |---|---:|---:|
 | **trn2.48xl × 32 cores, 4 steps, 512²** | **$0.0022** | **29% CHEAPER** ✅ |
-| trn2.48xl single core, 4 steps, 512² | $0.071 | — |
-| H100 single GPU (estimated 4 steps, 512²) | ~$0.0031 | baseline |
+| **trn2.48xl × 32 cores, 4 steps, 768²** | **$0.0043** | **~14% CHEAPER** ✅ |
+| trn2.48xl × 32 cores, 4 steps, 1024² | ❌ OOM | needs TP=2 |
 
 ## Key findings
 
 - **9.08B parameters, 18.16 GB BF16** — fits one logical core (24 GB budget)
 - **Works at 512×512** — 11.9s per image (4 steps), 2985 ms/step
+- **Works at 768×768** — 23.3s per image (4 steps), 5819 ms/step
 - **OOMs at 1024×1024** — weights (18 GB) + activations (4096 tokens) > 24 GB
 - **Same pipeline code** as FLUX.2-klein-4B (`NeuronFlux2KleinPipeline`)
-- Compile time: 225s (one-time, cached)
+- Compile time: 225s at 512², 514s at 768² (one-time, cached)
 
 ## Why 9B matters
 
@@ -31,10 +32,12 @@ but fits a single Trainium2 core. For customers who want higher quality
 than 4B but can't justify multi-GPU serving, Trainium offers a
 single-core path that H100 consumer-class instances can't match.
 
-For 1024×1024 generation, the 9B model needs either:
-- TP=2 (currently blocked by LNC architecture on trn2)
-- A future LNC=1 configuration (exposes 4 cores with 12 GB each — won't fit either)
-- Wait for Trainium3 with wider per-core memory
+For 1024×1024 generation, the 9B model needs TP=2 (two logical cores
+sharing the model). Initial TP=2 attempt on trn2.48xl succeeded at
+loading + sharding but hit a Neuron runtime distributed setup issue
+("rank has not been set") during inference. Fix requires configuring
+the Neuron distributed backend for inter-core all_reduce. Not
+fundamentally blocked — needs runtime configuration work.
 
 ## Usage
 
