@@ -81,9 +81,11 @@ def main() -> None:
     )
     ap.add_argument(
         "--vae-on-neuron", action="store_true",
-        help="Phase B: move the VAE to Neuron and per-block compile the "
-             "decoder (~2.9s CPU → ~0.95s Neuron per image). Removes the "
-             "host-CPU VAE decode that caps throughput under concurrency.",
+        help="EXPERIMENTAL / NOT RECOMMENDED. Moves the VAE to Neuron with "
+             "per-block decoder compile. Measured SLOWER at 1024 (3.8s vs "
+             "2.0s CPU channels_last) AND quality-degraded (std 14.6 vs "
+             "18.1) because it lacks the PatchedGroupNorm bf16 fix. Use "
+             "--vae-channels-last instead.",
     )
     ap.add_argument(
         "--vae-channels-last", action="store_true",
