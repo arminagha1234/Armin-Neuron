@@ -1,23 +1,55 @@
 # FLUX.2-klein-4B on AWS Trainium2
 
 **Latest (2026-06-14): 4.19 s warm per image at 1024², lossless,**
-via VAE-on-Neuron + PAVE fixes + mixed-flag compile. **~10.5× cheaper
-$/image than H100** at a throughput-shaped marketplace workload (full
-trn2.48xl, 32 logical cores).
+via VAE-on-Neuron + PAVE fixes + mixed-flag compile. **~25% cheaper
+$/image than H100** at full-instance throughput utilization on
+trn2.48xlarge (32 logical cores, apples-to-apples 4-step comparison;
+H100 4-step latency extrapolated from measured 28-step at 0.218 s/step).
 
 [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
 is Black Forest Labs' fastest distilled 4B DiT — designed for 4-step
 sub-second generation on GPU. On Trainium2, it runs end-to-end via
 `torch.compile(backend="neuron")` with native PyTorch (no NxDI, no
-vLLM). The cost story beats H100 at scale.
+vLLM). The cost story is competitive at scale.
 
 See
 [`native-pytorch/MIXED_FLAG_VAE_NEURON_WIN.md`](native-pytorch/MIXED_FLAG_VAE_NEURON_WIN.md)
 for the A/B record (4 measured configurations) and the recipe.
 
-## Cost comparison vs H100 (28-step legacy table — for historical context)
+## Cost comparison vs H100 — apples-to-apples 4-step
 
-| Configuration | $/image | vs H100 ($0.0073) |
+| Path | Wall-clock | $/image | vs H100 4-step ($0.00105) |
+|---|---:|---:|---:|
+| H100 single GPU (4-step extrapolated) | 0.87 s | $0.00105 | baseline |
+| trn2.48xl + prior shipped (5.92 s) | 5.92 s | $0.00110 | 5% more expensive |
+| **trn2.48xl + this PR (4.19 s)** | **4.19 s** | **$0.00078** | **~25% CHEAPER** ✅ |
+
+(H100: single GPU at $4.326/hr. Trainium: trn2.48xl at $21.50/hr,
+$/image divided by 32 logical cores at full throughput utilization.)
+
+A measured 4-step H100 baseline is on the followups list — we're
+quoting the linear extrapolation from a measured 28-step run, which
+slightly *understates* H100's edge because some H100 fixed overhead
+amortizes over more steps. So 25% cheaper is the optimistic Trainium
+read; the true number after a measured H100 4-step run will likely
+be a few points lower.
+
+> The earlier 28-step legacy bench is preserved at the bottom of this
+> doc for historical context, but the percentages in those tables
+> were computed against the 28-step H100 cost ($0.0073), not the
+> apples-to-apples 4-step cost ($0.00105). Use the table above.
+
+---
+
+### Legacy table (28-step bench, 28-step H100 baseline) — historical only
+
+The numbers below were computed against the **28-step H100 cost
+($0.0073/image)**, not the apples-to-apples 4-step cost ($0.00105).
+The %-cheaper claims are therefore overstated and should not be used
+in customer conversations — refer to the 4-step table above instead.
+Kept for traceability only.
+
+| Configuration | $/image | vs H100 28-step ($0.0073) |
 |---|---:|---:|
 | **trn2.48xl + prompt cache + 4 steps** (model's intended use) | **$0.0016** | **78% CHEAPER** ✅ |
 | **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ |
@@ -51,8 +83,8 @@ the CPU overhead and makes the gap even wider.
               ▼                                             ▼
        native-pytorch/                                vllm-omni/
        trn2.48xl + prompt caching                     needs omni engine
-       $0.0016/img at 4 steps                         shared scheduler/KV
-       (78% CHEAPER than H100!) ✅                     + other modalities
+       4.19 s/img, $0.00078 (~25% cheaper than H100)  shared scheduler/KV
+                                                      + other modalities
 ```
 
 ## Validated results (measured on hardware)

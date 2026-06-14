@@ -11,8 +11,11 @@ This is the **lowest-latency path** for FLUX.2-klein on Trainium2.
 ## Headline result (2026-06-14)
 
 **4.19 s warm at 1024×1024, 4-step distilled, lossless quality** (std
-18.16). 1.41× faster than the prior shipped 5.92 s baseline, ~10.5×
-cheaper $/image than H100 at a throughput-shaped marketplace workload.
+18.16). 1.41× faster than the prior shipped 5.92 s baseline,
+**~25% cheaper $/image than H100** at full-instance throughput
+utilization on trn2.48xlarge (32 logical cores, apples-to-apples
+4-step comparison; H100 4-step latency extrapolated from measured
+28-step at 0.218 s/step).
 Win delivered by the **VAE-on-Neuron + PAVE fixes +
 mixed-flag** path enabled by `--vae-on-neuron`. See
 [`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md) for the
@@ -22,9 +25,16 @@ A/B record.
 > historical comparison. Production now runs the distilled 4-step
 > config with `--vae-on-neuron --cache-image-latents`.
 
-## Legacy cost comparison (28-step, prior shipped path)
+## Legacy cost comparison (28-step bench, 28-step H100 baseline) — historical only
 
-| Configuration | $/image | vs H100 ($0.0073) |
+The %-cheaper numbers in this table were computed against the
+**28-step H100 cost ($0.0073)**, not the apples-to-apples 4-step
+cost ($0.00105). They are therefore overstated. The honest 4-step
+comparison lives at the top of this README and in
+[`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md). Kept
+here for traceability only.
+
+| Configuration | $/image | vs H100 28-step ($0.0073) |
 |---|---:|---:|
 | **trn2.48xl + prompt cache + 4 steps** | **$0.0016** | **78% CHEAPER** ✅ |
 | **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ |

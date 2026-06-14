@@ -86,21 +86,24 @@ What was broken in the prior attempt:
 This new path fixes all three. Quality returns to 18.16 (essentially
 matching the CPU baseline 18.15) and runtime drops by 29% end-to-end.
 
-## H100 comparison (post-Option-3)
+## H100 comparison (post-Option-3, apples-to-apples 4-step)
 
-| Metric | Trainium2 (Option 3) | H100 (4-step est.) | Ratio |
+| Metric | Trainium2 (Option 3) | H100 (4-step extrapolated) | Ratio |
 |---|---:|---:|---:|
-| Warm latency / image | **4.19 s** | ~0.9 s | ~4.6× slower |
-| $/image (single full instance, latency) | ~$0.0250 | ~$0.0082 | H100 ~3× cheaper at this granularity |
-| **$/image (32-core trn2.48xl, throughput)** | **~$0.00078** | **~$0.0082** | **Trainium ~10.5× cheaper** |
+| Warm latency / image | **4.19 s** | ~0.87 s | ~4.8× slower |
+| $/image (full instance, single-stream latency-bound) | $21.50/hr × 4.19s/3600 = ~$0.0250 | $4.326/hr × 0.87s/3600 = ~$0.00105 | H100 ~24× cheaper at this granularity |
+| **$/image (32-core trn2.48xl, throughput utilization)** | **~$0.00078** | **~$0.00105** | **Trainium ~25% cheaper** |
 
 The latency gap is real — for interactive UIs that want sub-second
-image generation, H100 still wins. For a marketplace-shaped
-throughput workload, Option 3 widens the existing $/image win
-meaningfully.
+image generation, H100 wins. For a marketplace-shaped throughput
+workload that fully utilizes the 32 logical cores of a trn2.48xl,
+Option 3 lands at ~25% cheaper $/image.
 
-(H100 4-step latency is extrapolated from a measured 28-step run at
-0.218 s/step. A measured 4-step H100 baseline is on the followups list.)
+(H100 4-step latency is extrapolated linearly from a measured 28-step
+run at ~0.218 s/step. A measured 4-step H100 baseline is on the
+followups list; that re-measurement will likely tighten H100's edge a
+few points because H100 has fixed per-image overhead that amortizes
+over more steps.)
 
 ## Where Option 3 fits in the optimization roadmap
 
