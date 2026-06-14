@@ -12,7 +12,8 @@ vLLM). The cost story beats H100 at scale.
 
 | Configuration | $/image | vs H100 ($0.0073) | Status |
 |---|---:|---:|---|
-| **trn2.48xl + prompt cache + 4 steps** (model's intended use) | **$0.0016** | **78% CHEAPER** ✅ | projected |
+| **trn2.48xl + prompt cache + 4 steps** (model's intended use) | **$0.0016** | **78% CHEAPER** ✅ | projected (prompt cache API needs fix) |
+| **trn2.48xl × 32 cores, 4 steps (full pipeline)** | **$0.0061** | **16% CHEAPER** ✅ | **measured** |
 | **trn2.48xl + prompt cache + 12 steps** | **$0.0026** | **64% CHEAPER** ✅ | projected |
 | **trn2.48xl + prompt cache + 28 steps** | **$0.0060** | **18% CHEAPER** ✅ | projected |
 | trn2.48xl × 16 cores (28 steps, no caching) | $0.0068 | 7% cheaper ✅ | **measured** |
