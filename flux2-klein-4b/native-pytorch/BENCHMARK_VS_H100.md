@@ -9,14 +9,42 @@
 
 ## Headline — 4-step distilled config (current production)
 
-| Path | Warm avg | Std | $/image @ 32-core trn2.48xl | vs H100 4-step (measured $0.00054) | Latency vs H100 4-step (measured 0.49 s) |
-|---|---:|---:|---:|---:|---:|
-| CPU VAE channels_last (prior shipped) | 5.92 s | 18.15 | ~$0.00110 | ~2.0× more expensive | ~12× slower |
-| **VAE on Neuron + PAVE fixes + mixed flags (NEW DEFAULT)** | **4.19 s** ✅ | **18.16** | **~$0.00078** | **~1.45× more expensive** | **~8.5× slower** |
+Both at on-demand pricing (trn2.48xl $35.7608/hr, p5.48xl $34.608/hr).
+Trainium runs 32 worker pipelines per box (1 per logical core, LNC=2);
+H100 runs 8 worker pipelines per box (1 per GPU). Per-image cost is the
+box hourly divided by parallel units, multiplied by warm wall-clock.
 
-**Win: −29% end-to-end, lossless quality.** See
-[`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md) for the
-full A/B record (4 measured configurations) and the recipe.
+| Path | Warm avg | Std | $/image (on-demand) | vs measured H100 0.49 s |
+|---|---:|---:|---:|---:|
+| CPU VAE channels_last (prior shipped) | 5.92 s | 18.15 | $0.00184 | 3.1× more expensive, 12× slower |
+| **VAE on Neuron + PAVE fixes + mixed flags (NEW DEFAULT)** | **4.19 s** ✅ | **18.16** | **$0.00130** | **2.21× more expensive, 8.5× slower** |
+| H100 measured stock (1024² 4-step) | 0.49 s | 76.3 | $0.000589 | baseline |
+
+**Win: −29% Trainium-side end-to-end, lossless quality** (5.92 → 4.19 s).
+But the absolute $/image gap to H100 is wider than the previous doc
+implied — measured H100 is faster than the 0.87 s extrapolation, so the
+"25% cheaper than H100" claim from prior versions was wrong on **both**
+inputs (Trainium hourly was understated at $21.50; H100 $/image was
+overstated at $0.00105). See [`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md)
+for the Trainium A/B record.
+
+### Trainium-side $/image at different pricing tiers
+
+The on-demand row is structurally more expensive than H100. Trainium
+becomes price-competitive at standard reservation tiers:
+
+| Trainium pricing | $/hr (trn2.48xl) | $/image (4.19 s ÷ 32 cores) | vs measured H100 stock ($0.000589) |
+|---|---:|---:|---:|
+| On-demand | $35.7608 | $0.00130 | 2.21× more expensive |
+| 1-yr reserved (~40% off) | ~$21.50 | $0.00078 | 1.32× more expensive |
+| **3-yr reserved (~58% off)** | **~$15.02** | **$0.00055** | **~par with stock H100 ✅** |
+| Spot (~70% off, when available) | ~$10.73 | $0.00039 | **1.51× cheaper than stock H100** ✅ |
+
+So the legitimate cost story is: **stock-vs-stock, Trainium needs at
+least 3-yr reserved or spot Trainium pricing to beat measured stock
+H100 on $/image today. With the full optimization roadmap landing
+(target ~1.7 s warm), the on-demand picture changes — that's a future
+state, not today.**
 
 ### Measured H100 baseline (replaces the 0.87 s extrapolation)
 
@@ -28,11 +56,11 @@ bf16, **stock diffusers, no torch.compile, no FP8, no FlashAttention-3**
 bench. Text-to-image, canonical 4-step + guidance=1.0, seed=42, n=5
 warm runs. Output `std=76.3` (real, sharp generation).
 
-| Config | H100 measured | Per-step | Output std | $/image (1/8 of p5.48xl box) |
+| Config | H100 measured | Per-step | Output std | $/image (1/8 of p5.48xl box, $34.608/hr) |
 |---|---:|---:|---:|---:|
-| **canonical 4-step 1024²** | **0.49 s warm** (cold 2.44 s, σ=0.005 s) | 124 ms | 76.3 | **$0.00054** |
-| 28-step 1024² (old apples-to-apples) | 2.53 s warm | 90 ms | 71.1 | $0.00277 |
-| `landscape_4_3` 1024×768 (fal API default) | 0.39 s warm | 98 ms | 75.1 | $0.00043 |
+| **canonical 4-step 1024²** | **0.49 s warm** (cold 2.44 s, σ=0.005 s) | 124 ms | 76.3 | **$0.000589** |
+| 28-step 1024² (old apples-to-apples) | 2.53 s warm | 90 ms | 71.1 | $0.003042 |
+| `landscape_4_3` 1024×768 (fal API default) | 0.39 s warm | 98 ms | 75.1 | $0.000469 |
 
 The earlier "0.87 s extrapolated" came from `6.1 s / 28 × 4` — wrong
 because per-step on H100 *increases* at 4 steps (124 ms vs 90 ms at
@@ -51,23 +79,26 @@ Raw JSON + sample PNGs (real generations): `results/h100_*.json`,
 `results/A_canonical_1024.png`, `results/B_apples_28step.png`,
 `results/C_landscape_4_3.png`.
 
-### H100 resolution sweep — 0.26 MP → 4.0 MP
+## H100 resolution sweep — 0.26 MP → 4.0 MP
 
 Single H100, canonical 4-step config, n=3 warm per resolution. Every
 resolution from 512² to 2048² succeeded with no OOM. **Latency scales
 linearly with megapixels:** `warm_s ≈ 0.13 + 0.49 × MP` (R²>0.99).
 
-| Resolution | MP | Warm avg | Per-step | Output std | Peak HBM | $/image (1/8 of box) |
+`$/image` column = warm × $34.608/hr ÷ 8 GPUs ÷ 3600 (one GPU's share
+of an 8-GPU p5.48xl box on-demand).
+
+| Resolution | MP | Warm avg | Per-step | Output std | Peak HBM | $/image |
 |---|---:|---:|---:|---:|---:|---:|
-| `square` 512×512 | 0.26 | **0.19 s** | 47 ms | 75.9 | 15.6 GB | $0.00021 |
-| `landscape_4_3` 1024×768 (fal default) | 0.79 | **0.39 s** | 97 ms | 79.3 | 16.8 GB | $0.00043 |
-| 1280×720 | 0.92 | 0.44 s | 111 ms | 72.8 | 17.1 GB | $0.00048 |
-| `square_hd` 1024×1024 (fal preset max) | 1.05 | **0.49 s** | 124 ms | 72.9 | 17.3 GB | $0.00054 |
-| 1536×1024 | 1.57 | 0.73 s | 181 ms | 78.1 | 18.5 GB | $0.00079 |
-| 1792×1024 | 1.84 | 0.84 s | 211 ms | 81.4 | 19.1 GB | $0.00092 |
-| 2048×1024 | 2.10 | 0.98 s | 244 ms | 75.9 | 19.7 GB | $0.00107 |
-| 2048×1536 | 3.15 | 1.53 s | 381 ms | 79.2 | 22.1 GB | $0.00167 |
-| **2048×2048 (4 MP, klein max)** | **4.19** | **2.14 s** | **534 ms** | **74.1** | **24.5 GB** | **$0.00233** |
+| `square` 512×512 | 0.26 | **0.19 s** | 47 ms | 75.9 | 15.6 GB | $0.000228 |
+| `landscape_4_3` 1024×768 (fal default) | 0.79 | **0.39 s** | 97 ms | 79.3 | 16.8 GB | $0.000469 |
+| 1280×720 | 0.92 | 0.44 s | 111 ms | 72.8 | 17.1 GB | $0.000529 |
+| `square_hd` 1024×1024 (fal preset max) | 1.05 | **0.49 s** | 124 ms | 72.9 | 17.3 GB | **$0.000589** |
+| 1536×1024 | 1.57 | 0.73 s | 181 ms | 78.1 | 18.5 GB | $0.000877 |
+| 1792×1024 | 1.84 | 0.84 s | 211 ms | 81.4 | 19.1 GB | $0.001009 |
+| 2048×1024 | 2.10 | 0.98 s | 244 ms | 75.9 | 19.7 GB | $0.001178 |
+| 2048×1536 | 3.15 | 1.53 s | 381 ms | 79.2 | 22.1 GB | $0.001838 |
+| **2048×2048 (4 MP, klein max)** | **4.19** | **2.14 s** | **534 ms** | **74.1** | **24.5 GB** | **$0.002572** |
 
 **Notable finding:** 4 MP fits comfortably on a single H100 (24.5 GB
 peak of 80 GB). Per-step at 4 MP is **only 4.3× the 1 MP per-step**,
