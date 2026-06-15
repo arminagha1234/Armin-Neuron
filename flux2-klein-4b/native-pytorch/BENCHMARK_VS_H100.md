@@ -9,19 +9,80 @@
 
 ## Headline — 4-step distilled config (current production)
 
-| Path | Warm avg | Std | $/image @ 32-core trn2.48xl | vs H100 4-step ($0.00105) | Latency vs H100 4-step (~0.87 s) |
+| Path | Warm avg | Std | $/image @ 32-core trn2.48xl | vs H100 4-step (measured $0.00054) | Latency vs H100 4-step (measured 0.49 s) |
 |---|---:|---:|---:|---:|---:|
-| CPU VAE channels_last (prior shipped) | 5.92 s | 18.15 | ~$0.00110 | ~5% MORE expensive | 6.8× slower latency |
-| **VAE on Neuron + PAVE fixes + mixed flags (NEW DEFAULT)** | **4.19 s** ✅ | **18.16** | **~$0.00078** | **~25% CHEAPER** ✅ | **~4.8× slower latency** |
+| CPU VAE channels_last (prior shipped) | 5.92 s | 18.15 | ~$0.00110 | ~2.0× more expensive | ~12× slower |
+| **VAE on Neuron + PAVE fixes + mixed flags (NEW DEFAULT)** | **4.19 s** ✅ | **18.16** | **~$0.00078** | **~1.45× more expensive** | **~8.5× slower** |
 
 **Win: −29% end-to-end, lossless quality.** See
 [`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md) for the
 full A/B record (4 measured configurations) and the recipe.
 
-H100 4-step latency and $/image are extrapolated from a measured 28-step
-run (~0.218 s/step). A measured 4-step H100 baseline is a documented
-followup; that measurement will likely tighten H100's edge slightly
-because some H100 fixed overhead amortizes over more steps.
+### Measured H100 baseline (replaces the 0.87 s extrapolation)
+
+Measured 2026-06-14 on a clean p5.48xlarge `i-02553d3272f721a84`
+(us-east-2), single H100 SXM5 80GB, driver 575.57.08, CUDA 12.8,
+torch 2.11.0+cu128, diffusers 0.39.0.dev (HF main), transformers 5.12,
+bf16, **stock diffusers, no torch.compile, no FP8, no FlashAttention-3**
+— same software-stack honesty class as the Trainium native-PyTorch
+bench. Text-to-image, canonical 4-step + guidance=1.0, seed=42, n=5
+warm runs. Output `std=76.3` (real, sharp generation).
+
+| Config | H100 measured | Per-step | Output std | $/image (1/8 of p5.48xl box) |
+|---|---:|---:|---:|---:|
+| **canonical 4-step 1024²** | **0.49 s warm** (cold 2.44 s, σ=0.005 s) | 124 ms | 76.3 | **$0.00054** |
+| 28-step 1024² (old apples-to-apples) | 2.53 s warm | 90 ms | 71.1 | $0.00277 |
+| `landscape_4_3` 1024×768 (fal API default) | 0.39 s warm | 98 ms | 75.1 | $0.00043 |
+
+The earlier "0.87 s extrapolated" came from `6.1 s / 28 × 4` — wrong
+because per-step on H100 *increases* at 4 steps (124 ms vs 90 ms at
+28 steps) due to fixed text-encode + VAE overhead not shrinking with
+step count. Real measured 4-step is **~1.8× faster than that
+extrapolation predicted**.
+
+The earlier "6.1 s at 28 steps" was on torch 2.12 + diffusers 0.38 +
+CUDA 13. Today's measurement on torch 2.11 + diffusers 0.39.0.dev +
+CUDA 12.8 measures **2.53 s at 28 steps** — a ~2.4× improvement on the
+GPU side from the upstream diffusers FLUX.2 pipeline optimizations
+shipped between 0.38 and 0.39. fal's production stack likely sits
+somewhere between these two.
+
+Raw JSON + sample PNGs (real generations): `results/h100_*.json`,
+`results/A_canonical_1024.png`, `results/B_apples_28step.png`,
+`results/C_landscape_4_3.png`.
+
+### H100 resolution sweep — 0.26 MP → 4.0 MP
+
+Single H100, canonical 4-step config, n=3 warm per resolution. Every
+resolution from 512² to 2048² succeeded with no OOM. **Latency scales
+linearly with megapixels:** `warm_s ≈ 0.13 + 0.49 × MP` (R²>0.99).
+
+| Resolution | MP | Warm avg | Per-step | Output std | Peak HBM | $/image (1/8 of box) |
+|---|---:|---:|---:|---:|---:|---:|
+| `square` 512×512 | 0.26 | **0.19 s** | 47 ms | 75.9 | 15.6 GB | $0.00021 |
+| `landscape_4_3` 1024×768 (fal default) | 0.79 | **0.39 s** | 97 ms | 79.3 | 16.8 GB | $0.00043 |
+| 1280×720 | 0.92 | 0.44 s | 111 ms | 72.8 | 17.1 GB | $0.00048 |
+| `square_hd` 1024×1024 (fal preset max) | 1.05 | **0.49 s** | 124 ms | 72.9 | 17.3 GB | $0.00054 |
+| 1536×1024 | 1.57 | 0.73 s | 181 ms | 78.1 | 18.5 GB | $0.00079 |
+| 1792×1024 | 1.84 | 0.84 s | 211 ms | 81.4 | 19.1 GB | $0.00092 |
+| 2048×1024 | 2.10 | 0.98 s | 244 ms | 75.9 | 19.7 GB | $0.00107 |
+| 2048×1536 | 3.15 | 1.53 s | 381 ms | 79.2 | 22.1 GB | $0.00167 |
+| **2048×2048 (4 MP, klein max)** | **4.19** | **2.14 s** | **534 ms** | **74.1** | **24.5 GB** | **$0.00233** |
+
+**Notable finding:** 4 MP fits comfortably on a single H100 (24.5 GB
+peak of 80 GB). Per-step at 4 MP is **only 4.3× the 1 MP per-step**,
+not the ~16× you'd expect from naive S² attention scaling — the fixed
+text-encode/VAE/projection overhead dominates more than attention does
+even at 4 MP under the stock compiler. **This confirms the
+"≤ 1024² → don't write a custom attention kernel" recommendation
+holds even higher than we documented:** even at 4 MP attention isn't
+the dominant cost on the GPU stock path.
+
+For Trainium: the 24.5 GB peak HBM at 4 MP sits right at the per-core
+24 GB user budget, so 4 MP on Trainium likely requires TP. Single-core
+4 MP is borderline-impossible on Trainium today; with TP=4 it's
+plausible but carries the TP overhead documented in
+[`TP4_FINDINGS.md`](TP4_FINDINGS.md).
 
 ---
 
