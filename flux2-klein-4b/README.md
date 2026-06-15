@@ -18,14 +18,26 @@ for the A/B record (4 measured configurations) and the recipe.
 
 ## Cost comparison vs H100 — apples-to-apples 4-step
 
-| Path | Wall-clock | $/image | vs H100 4-step ($0.00105) |
+| Path | Wall-clock | $/image | vs p5.4xl ($0.00105) |
 |---|---:|---:|---:|
-| H100 single GPU (4-step extrapolated) | 0.87 s | $0.00105 | baseline |
-| trn2.48xl + prior shipped (5.92 s) | 5.92 s | $0.00110 | 5% more expensive |
-| **trn2.48xl + this PR (4.19 s)** | **4.19 s** | **$0.00078** | **~25% CHEAPER** ✅ |
+| H100 1× p5.4xl Capacity Blocks (4-step extrapolated) | 0.87 s | $0.00105 | baseline |
+| trn2.3xl single-core (single-stream entry) | 4.19 s | $0.00260 | 2.5× more expensive |
+| trn2.48xl + prior shipped (5.92 s, 32-core saturated) | 5.92 s | $0.00110 | 5% more expensive |
+| **trn2.48xl + this PR (4.19 s, 32-core saturated)** | **4.19 s** | **$0.00078** | **~25% CHEAPER** ✅ |
 
-(H100: single GPU at $4.326/hr. Trainium: trn2.48xl at $21.50/hr,
-$/image divided by 32 logical cores at full throughput utilization.)
+(H100: p5.4xlarge Capacity Blocks at $4.326/hr.
+Trainium: trn2.3xlarge at $2.23/hr (single-stream entry,
+1 logical core);
+trn2.48xlarge at $21.50/hr, $/image divided by 32 logical
+cores at full throughput utilization.)
+
+**Reading the table:**
+- **Lowest latency**: H100 wins (~4.8× faster per image).
+- **Cheapest entry pricing for low volume**: trn2.3xl ($2.23/hr is
+  the lowest hourly here; ideal for getting started before traffic
+  ramps).
+- **Cheapest unit cost at scale**: trn2.48xl saturated → ~25% cheaper
+  per image than p5.4xl.
 
 A measured 4-step H100 baseline is on the followups list — we're
 quoting the linear extrapolation from a measured 28-step run, which
@@ -59,7 +71,7 @@ Kept for traceability only.
 | trn2.48xl × 4 cores (28 steps) | $0.0091 | 1.24× more expensive |
 | trn2.3xl batch parallel (28 steps) | $0.024 | 3.3× more expensive |
 
-(H100: single GPU at $4.326/hr = $0.0073/image at 28 steps.
+(H100: p5.4xlarge Capacity Blocks at $4.326/hr.
 Trainium2: trn2.48xlarge $21.50/hr, trn2.3xlarge $2.23/hr.)
 
 **Key insight:** FLUX.2-klein-4B is already a distilled model — it's
@@ -154,7 +166,7 @@ flux2-klein-4b/
 
 - **Native PyTorch:** trn2.3xlarge + trn2.48xlarge, Beta 3 DLC, 2026-06-13
 - **vLLM-Omni:** trn2.48xlarge, vllm-omni 0.19.0rc1, 2026-06-13
-- **H100:** single GPU at $4.326/hr, torch 2.12, CUDA 13.0
+- **H100:** p5.4xlarge Capacity Blocks at $4.326/hr, torch 2.12, CUDA 13.0
 - **inf2:** tested and blocked (DMA transpose limitation)
 
 ## License

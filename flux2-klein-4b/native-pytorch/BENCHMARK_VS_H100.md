@@ -9,14 +9,21 @@
 
 ## Headline — 4-step distilled config (current production)
 
-| Path | Warm avg | Std | $/image @ 32-core trn2.48xl | vs H100 4-step ($0.00105) | Latency vs H100 4-step (~0.87 s) |
+| Path | Warm avg | Std | $/image | vs p5.4xl ($0.00105) | Latency vs H100 4-step (~0.87 s) |
 |---|---:|---:|---:|---:|---:|
-| CPU VAE channels_last (prior shipped) | 5.92 s | 18.15 | ~$0.00110 | ~5% MORE expensive | 6.8× slower latency |
-| **VAE on Neuron + PAVE fixes + mixed flags (NEW DEFAULT)** | **4.19 s** ✅ | **18.16** | **~$0.00078** | **~25% CHEAPER** ✅ | **~4.8× slower latency** |
+| H100 1× p5.4xl Capacity Blocks (4-step extrapolated) | 0.87 s | n/a | $0.00105 | baseline | 1× (reference) |
+| trn2.3xl single-core (single-stream entry) | 4.19 s | 18.16 | $0.00260 | 2.5× more expensive | ~4.8× slower |
+| CPU VAE channels_last (prior shipped, 32-core saturated) | 5.92 s | 18.15 | ~$0.00110 | ~5% MORE expensive | 6.8× slower |
+| **VAE on Neuron + PAVE fixes + mixed flags (NEW DEFAULT, 32-core saturated)** | **4.19 s** ✅ | **18.16** | **~$0.00078** | **~25% CHEAPER** ✅ | **~4.8× slower** |
 
-**Win: −29% end-to-end, lossless quality.** See
+**Win: −29% end-to-end on the saturated row, lossless quality.** See
 [`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md) for the
 full A/B record (4 measured configurations) and the recipe.
+
+(H100 hourly: p5.4xlarge Capacity Blocks at $4.326/hr.
+Trainium hourly: trn2.3xlarge at $2.23/hr (single-stream entry box,
+1 logical core); trn2.48xlarge at $21.50/hr, $/image divided by 32
+logical cores at full throughput utilization.)
 
 H100 4-step latency and $/image are extrapolated from a measured 28-step
 run (~0.218 s/step). A measured 4-step H100 baseline is a documented
@@ -118,7 +125,7 @@ Trainium2 single-core, no caching:
 Trainium2 single-core, prompt + image-latents cached:
    6.86 s × ($21.50 / 3600 / 32 cores) = $0.0013 per image  ← 5× cheaper
 
-H100 single GPU, distilled (4 steps):
+H100 single GPU (p5.4xl Capacity Blocks, 4 steps):
    ~0.87 s × ($4.326 / 3600) = $0.0010 per image
 
 Trainium2 cost gap to H100: 1.3× (was 6.5× before Path A)
@@ -163,8 +170,8 @@ generator-state ordering.
   `torch.compile(backend="neuron")`
 - NEFF cache: `/mnt/data/work/flux2/neff_cache_4step`
 
-### H100 (single GPU, on-demand)
-- Instance type: single-H100 instance at $4.326/hr
+### H100 (p5.4xlarge Capacity Blocks, single GPU)
+- Instance type: p5.4xlarge at $4.326/hr (Capacity Blocks rate)
 - GPU: NVIDIA H100 80GB HBM3
 - Stack: torch 2.12.0, diffusers 0.38.0, CUDA 13.0
 - Pipeline: vanilla `Flux2KleinPipeline.from_pretrained().to("cuda:0")`

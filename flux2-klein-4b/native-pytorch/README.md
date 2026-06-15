@@ -43,7 +43,7 @@ here for traceability only.
 | trn2.48xl × 16 cores (28 steps, no caching) | $0.0068 | 7% cheaper ✅ |
 | trn2.48xl × 4 cores | $0.0091 | 1.24× more expensive |
 | trn2.3xl batch parallel (2 cores) | $0.024 | 3.3× more expensive |
-| H100 single GPU @ $4.326/hr | $0.0073 | baseline |
+| H100 single GPU (p5.4xl Capacity Blocks @ $4.326/hr) | $0.0073 | baseline |
 
 **Why this works:** FLUX.2-klein-4B is already a distilled model (designed
 for 4-step generation). Each Trainium2 core runs at 960 ms/step for the

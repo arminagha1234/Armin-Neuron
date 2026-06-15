@@ -88,16 +88,21 @@ matching the CPU baseline 18.15) and runtime drops by 29% end-to-end.
 
 ## H100 comparison (post-Option-3, apples-to-apples 4-step)
 
-| Metric | Trainium2 (Option 3) | H100 (4-step extrapolated) | Ratio |
+| Metric | trn2.3xl (1 core, single-stream) | trn2.48xl (32-core saturated) | p5.4xl Capacity Blocks (4-step extrap) |
 |---|---:|---:|---:|
-| Warm latency / image | **4.19 s** | ~0.87 s | ~4.8× slower |
-| $/image (full instance, single-stream latency-bound) | $21.50/hr × 4.19s/3600 = ~$0.0250 | $4.326/hr × 0.87s/3600 = ~$0.00105 | H100 ~24× cheaper at this granularity |
-| **$/image (32-core trn2.48xl, throughput utilization)** | **~$0.00078** | **~$0.00105** | **Trainium ~25% cheaper** |
+| Hourly | $2.23 | $21.50 | $4.326 |
+| Per-image latency | 4.19 s | 4.19 s | ~0.87 s |
+| **$/image** | **$0.00260** | **$0.00078** | **$0.00105** |
+| vs p5.4xl ($0.00105) | 2.5× more expensive | **~25% cheaper** ✅ | baseline |
+| vs p5.4xl latency | ~4.8× slower | ~4.8× slower | 1× |
 
 The latency gap is real — for interactive UIs that want sub-second
-image generation, H100 wins. For a marketplace-shaped throughput
-workload that fully utilizes the 32 logical cores of a trn2.48xl,
-Option 3 lands at ~25% cheaper $/image.
+image generation, H100 wins (~4.8× faster per image). For a marketplace-
+shaped throughput workload that fully utilizes the 32 logical cores of
+a trn2.48xl, Option 3 lands at ~25% cheaper $/image. For low-volume /
+single-stream entry, trn2.3xl is the cheapest hourly box ($2.23/hr) but
+the latency gap means $/image is higher than p5.4xl until traffic
+saturates the bigger Trainium instance.
 
 (H100 4-step latency is extrapolated linearly from a measured 28-step
 run at ~0.218 s/step. A measured 4-step H100 baseline is on the
