@@ -86,29 +86,41 @@ What was broken in the prior attempt:
 This new path fixes all three. Quality returns to 18.16 (essentially
 matching the CPU baseline 18.15) and runtime drops by 29% end-to-end.
 
-## H100 comparison (post-Option-3, apples-to-apples 4-step)
+## H100 comparison (post-Option-3, MEASURED H100 4-step)
 
-| Metric | trn2.3xl (1 core, single-stream) | trn2.48xl (32-core saturated) | p5.4xl Capacity Blocks (4-step extrap) |
+| Metric | trn2.3xl (1 core, single-stream) | trn2.48xl (32-core saturated) | p5.4xl Capacity Blocks (MEASURED 4-step) |
 |---|---:|---:|---:|
 | Hourly | $2.23 | $21.50 | $4.326 |
-| Per-image latency | 4.19 s | 4.19 s | ~0.87 s |
-| **$/image** | **$0.00260** | **$0.00078** | **$0.00105** |
-| vs p5.4xl ($0.00105) | 2.5× more expensive | **~25% cheaper** ✅ | baseline |
-| vs p5.4xl latency | ~4.8× slower | ~4.8× slower | 1× |
+| Per-image latency | 4.19 s | 4.19 s | **0.49 s** (measured) |
+| **$/image** | $0.00260 | $0.00078 | **$0.00059** ✅ |
+| vs p5.4xl ($0.00059) | ~4.4× more expensive | ~1.3× more expensive | baseline |
+| vs p5.4xl latency | ~8.5× slower | ~8.5× slower | 1× |
 
-The latency gap is real — for interactive UIs that want sub-second
-image generation, H100 wins (~4.8× faster per image). For a marketplace-
-shaped throughput workload that fully utilizes the 32 logical cores of
-a trn2.48xl, Option 3 lands at ~25% cheaper $/image. For low-volume /
-single-stream entry, trn2.3xl is the cheapest hourly box ($2.23/hr) but
-the latency gap means $/image is higher than p5.4xl until traffic
-saturates the bigger Trainium instance.
+**Honest reading:** measured H100 at 4-step is 0.49 s / $0.00059, not
+the 0.87 s / $0.00105 we extrapolated from a 28-step run. The
+extrapolation was wrong because H100 per-step *increases* at low step
+counts (124 ms vs 90 ms at 28 steps) — fixed text-encode + VAE
+overhead doesn't shrink with step count. So:
 
-(H100 4-step latency is extrapolated linearly from a measured 28-step
-run at ~0.218 s/step. A measured 4-step H100 baseline is on the
-followups list; that re-measurement will likely tighten H100's edge a
-few points because H100 has fixed per-image overhead that amortizes
-over more steps.)
+- **H100 is faster AND cheaper** than Trainium on this benchmark
+  today (4-step, 1024², stock diffusers paths on both sides).
+- **The −29% Trainium-internal speedup (5.92 s → 4.19 s) is still
+  real** — that's the right Trainium-vs-Trainium comparison and it's
+  what this PR ships.
+- **Trainium remains a legitimate choice for:** (a) lower hourly
+  entry pricing (trn2.3xl at $2.23/hr is the cheapest hourly box
+  here), (b) inventory / availability when H100 capacity is
+  constrained, (c) workloads that benefit from TP/CP at sizes
+  Trainium fits natively, and (d) the longer-term roadmap (FP8
+  weights, fused kernels, batch sizing) that has more headroom on
+  Trainium than on the already-mature GPU stock path.
+
+H100 measurement source: clean p5.48xlarge `i-02553d3272f721a84`
+(us-east-2), single H100 SXM5 80GB, driver 575.57.08, CUDA 12.8,
+torch 2.11.0+cu128, diffusers 0.39.0.dev, transformers 5.12, bf16,
+**stock diffusers, no torch.compile, no FP8, no FlashAttention-3** —
+same software-stack honesty class as the Trainium native-PyTorch
+bench. n=5 warm runs, σ=0.005 s. Output std=76.3.
 
 ## Where Option 3 fits in the optimization roadmap
 

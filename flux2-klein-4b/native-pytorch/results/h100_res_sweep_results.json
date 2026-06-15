@@ -1,0 +1,210 @@
+{
+  "torch_version": "2.11.0+cu128",
+  "gpu_name": "NVIDIA H100 80GB HBM3",
+  "base_model": "black-forest-labs/FLUX.2-klein-4B",
+  "prompt": "A photorealistic red sports car on a mountain road at sunset, golden hour",
+  "seed": 42,
+  "steps": 4,
+  "guidance": 1.0,
+  "mode": "text-to-image",
+  "results": [
+    {
+      "label": "square_512",
+      "width": 512,
+      "height": 512,
+      "mp": 0.26,
+      "cold_s": 2.1923828125,
+      "warm_avg": 0.18877450625101724,
+      "warm_min": 0.18774771690368652,
+      "warm_max": 0.19044280052185059,
+      "warm_stdev": 0.0014575717314707483,
+      "per_step_ms": 47.19362656275431,
+      "quality": {
+        "std": 75.93675994873047,
+        "mean": 109.58779907226562,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 15.56351375579834,
+      "out_path": "/home/ec2-user/h100_res_sweep/square_512.png",
+      "$_per_image_8gpu_p5": 0.00020623614807923631,
+      "status": "OK"
+    },
+    {
+      "label": "landscape_4_3_def",
+      "width": 1024,
+      "height": 768,
+      "mp": 0.79,
+      "cold_s": 1.210042953491211,
+      "warm_avg": 0.38974754015604657,
+      "warm_min": 0.38792872428894043,
+      "warm_max": 0.3913543224334717,
+      "warm_stdev": 0.0017226141019737243,
+      "per_step_ms": 97.43688503901164,
+      "quality": {
+        "std": 79.3262939453125,
+        "mean": 97.15756225585938,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 16.75302791595459,
+      "out_path": "/home/ec2-user/h100_res_sweep/landscape_4_3_def.png",
+      "$_per_image_8gpu_p5": 0.00042579918762048087,
+      "status": "OK"
+    },
+    {
+      "label": "square_hd",
+      "width": 1024,
+      "height": 1024,
+      "mp": 1.05,
+      "cold_s": 1.2811024188995361,
+      "warm_avg": 0.4944458802541097,
+      "warm_min": 0.4926626682281494,
+      "warm_max": 0.49549412727355957,
+      "warm_stdev": 0.0015522307341548456,
+      "per_step_ms": 123.61147006352742,
+      "quality": {
+        "std": 72.93408203125,
+        "mean": 120.8690414428711,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 17.347784996032715,
+      "out_path": "/home/ec2-user/h100_res_sweep/square_hd.png",
+      "$_per_image_8gpu_p5": 0.0005401821241776149,
+      "status": "OK"
+    },
+    {
+      "label": "res_1280x720",
+      "width": 1280,
+      "height": 720,
+      "mp": 0.92,
+      "cold_s": 1.307602882385254,
+      "warm_avg": 0.44325757026672363,
+      "warm_min": 0.4406440258026123,
+      "warm_max": 0.4446108341217041,
+      "warm_stdev": 0.002263873333562947,
+      "per_step_ms": 110.81439256668091,
+      "quality": {
+        "std": 72.8016357421875,
+        "mean": 98.99079895019531,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 17.060676097869873,
+      "out_path": "/home/ec2-user/h100_res_sweep/res_1280x720.png",
+      "$_per_image_8gpu_p5": 0.0004842588955163956,
+      "status": "OK"
+    },
+    {
+      "label": "res_1536x1024",
+      "width": 1536,
+      "height": 1024,
+      "mp": 1.57,
+      "cold_s": 1.5107972621917725,
+      "warm_avg": 0.72581680615743,
+      "warm_min": 0.7219412326812744,
+      "warm_max": 0.7278435230255127,
+      "warm_stdev": 0.003357523029680255,
+      "per_step_ms": 181.4542015393575,
+      "quality": {
+        "std": 78.08747863769531,
+        "mean": 93.66400909423828,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 18.538275718688965,
+      "out_path": "/home/ec2-user/h100_res_sweep/res_1536x1024.png",
+      "$_per_image_8gpu_p5": 0.0007929548607269923,
+      "status": "OK"
+    },
+    {
+      "label": "res_1792x1024",
+      "width": 1792,
+      "height": 1024,
+      "mp": 1.84,
+      "cold_s": 1.6225764751434326,
+      "warm_avg": 0.8437934716542562,
+      "warm_min": 0.8381600379943848,
+      "warm_max": 0.847700834274292,
+      "warm_stdev": 0.0049991188563178095,
+      "per_step_ms": 210.94836791356406,
+      "quality": {
+        "std": 81.44576263427734,
+        "mean": 105.10575866699219,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 19.13254451751709,
+      "out_path": "/home/ec2-user/h100_res_sweep/res_1792x1024.png",
+      "$_per_image_8gpu_p5": 0.0009218443677822749,
+      "status": "OK"
+    },
+    {
+      "label": "res_2048x1024",
+      "width": 2048,
+      "height": 1024,
+      "mp": 2.1,
+      "cold_s": 1.737025499343872,
+      "warm_avg": 0.9752638339996338,
+      "warm_min": 0.973909854888916,
+      "warm_max": 0.9777407646179199,
+      "warm_stdev": 0.002148192822864543,
+      "per_step_ms": 243.81595849990845,
+      "quality": {
+        "std": 75.93038177490234,
+        "mean": 110.72146606445312,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 19.726813316345215,
+      "out_path": "/home/ec2-user/h100_res_sweep/res_2048x1024.png",
+      "$_per_image_8gpu_p5": 0.0010654757386445999,
+      "status": "OK"
+    },
+    {
+      "label": "res_2048x1536",
+      "width": 2048,
+      "height": 1536,
+      "mp": 3.15,
+      "cold_s": 2.2818710803985596,
+      "warm_avg": 1.5258324146270752,
+      "warm_min": 1.5210552215576172,
+      "warm_max": 1.5340778827667236,
+      "warm_stdev": 0.007170713019893472,
+      "per_step_ms": 381.4581036567688,
+      "quality": {
+        "std": 79.16206359863281,
+        "mean": 118.09371948242188,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 22.106329917907715,
+      "out_path": "/home/ec2-user/h100_res_sweep/res_2048x1536.png",
+      "$_per_image_8gpu_p5": 0.0016669719129800795,
+      "status": "OK"
+    },
+    {
+      "label": "res_2048x2048_4MP",
+      "width": 2048,
+      "height": 2048,
+      "mp": 4.19,
+      "cold_s": 2.8537683486938477,
+      "warm_avg": 2.135857264200846,
+      "warm_min": 2.1268272399902344,
+      "warm_max": 2.153303861618042,
+      "warm_stdev": 0.015112309605479202,
+      "per_step_ms": 533.9643160502116,
+      "quality": {
+        "std": 74.06844329833984,
+        "mean": 112.59479522705078,
+        "minv": 0.0,
+        "maxv": 255.0
+      },
+      "peak_mem_gb": 24.484869956970215,
+      "out_path": "/home/ec2-user/h100_res_sweep/res_2048x2048_4MP.png",
+      "$_per_image_8gpu_p5": 0.002333424061139424,
+      "status": "OK"
+    }
+  ]
+}

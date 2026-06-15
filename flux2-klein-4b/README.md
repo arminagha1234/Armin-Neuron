@@ -1,29 +1,41 @@
 # FLUX.2-klein-4B on AWS Trainium2
 
-**Latest (2026-06-14): 4.19 s warm per image at 1024², lossless,**
-via VAE-on-Neuron + PAVE fixes + mixed-flag compile. **~25% cheaper
-$/image than H100** at full-instance throughput utilization on
-trn2.48xlarge (32 logical cores, apples-to-apples 4-step comparison;
-H100 4-step latency extrapolated from measured 28-step at 0.218 s/step).
+**Latest (2026-06-14, MEASURED):** 4.19 s warm per image at 1024²,
+lossless, via VAE-on-Neuron + PAVE fixes + mixed-flag compile. That's
+a **−29% Trainium-internal speedup** over the prior shipped 5.92 s
+path (still real, still ships).
+
+**Honest H100 comparison (measured):** at 4-step 1024², a single H100
+on p5.4xl Capacity Blocks runs the same model in **0.49 s warm /
+$0.00059 per image** (measured 2026-06-14 on diffusers 0.39.0.dev),
+which is ~8.5× faster latency and ~25% cheaper $/image than our
+saturated trn2.48xl. The earlier "Trainium ~25% cheaper" headline
+came from a 6.1 s × 4/28 ≈ 0.87 s extrapolation that overcosted H100;
+the measured 4-step number is 1.8× faster than that, and that flips
+the comparison.
 
 [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
 is Black Forest Labs' fastest distilled 4B DiT — designed for 4-step
 sub-second generation on GPU. On Trainium2, it runs end-to-end via
 `torch.compile(backend="neuron")` with native PyTorch (no NxDI, no
-vLLM). The cost story is competitive at scale.
+vLLM). The customer story is honest: H100 is the cheaper / faster
+option for FLUX.2-klein-4B at 4-step today; Trainium is competitive
+on hourly entry pricing (trn2.3xl at $2.23/hr is the cheapest hourly
+box here) and on inventory / availability where H100 capacity is
+constrained.
 
 See
 [`native-pytorch/MIXED_FLAG_VAE_NEURON_WIN.md`](native-pytorch/MIXED_FLAG_VAE_NEURON_WIN.md)
 for the A/B record (4 measured configurations) and the recipe.
 
-## Cost comparison vs H100 — apples-to-apples 4-step
+## Cost comparison vs H100 — apples-to-apples 4-step (MEASURED)
 
-| Path | Wall-clock | $/image | vs p5.4xl ($0.00105) |
+| Path | Wall-clock | $/image | vs p5.4xl ($0.00059) |
 |---|---:|---:|---:|
-| H100 1× p5.4xl Capacity Blocks (4-step extrapolated) | 0.87 s | $0.00105 | baseline |
-| trn2.3xl single-core (single-stream entry) | 4.19 s | $0.00260 | 2.5× more expensive |
-| trn2.48xl + prior shipped (5.92 s, 32-core saturated) | 5.92 s | $0.00110 | 5% more expensive |
-| **trn2.48xl + this PR (4.19 s, 32-core saturated)** | **4.19 s** | **$0.00078** | **~25% CHEAPER** ✅ |
+| **H100 1× p5.4xl Capacity Blocks (MEASURED 4-step)** | **0.49 s** | **$0.00059** | baseline |
+| trn2.3xl single-core (single-stream entry) | 4.19 s | $0.00260 | ~4.4× more expensive |
+| trn2.48xl + prior shipped (5.92 s, 32-core saturated) | 5.92 s | $0.00110 | ~1.9× more expensive |
+| **trn2.48xl + this PR (4.19 s, 32-core saturated)** | **4.19 s** | **$0.00078** | **~1.3× more expensive** |
 
 (H100: p5.4xlarge Capacity Blocks at $4.326/hr.
 Trainium: trn2.3xlarge at $2.23/hr (single-stream entry,
@@ -32,19 +44,13 @@ trn2.48xlarge at $21.50/hr, $/image divided by 32 logical
 cores at full throughput utilization.)
 
 **Reading the table:**
-- **Lowest latency**: H100 wins (~4.8× faster per image).
-- **Cheapest entry pricing for low volume**: trn2.3xl ($2.23/hr is
-  the lowest hourly here; ideal for getting started before traffic
-  ramps).
-- **Cheapest unit cost at scale**: trn2.48xl saturated → ~25% cheaper
-  per image than p5.4xl.
-
-A measured 4-step H100 baseline is on the followups list — we're
-quoting the linear extrapolation from a measured 28-step run, which
-slightly *understates* H100's edge because some H100 fixed overhead
-amortizes over more steps. So 25% cheaper is the optimistic Trainium
-read; the true number after a measured H100 4-step run will likely
-be a few points lower.
+- **Lowest latency**: H100 (~8.5× faster per image at 1024²).
+- **Lowest hourly**: trn2.3xl at $2.23/hr — useful for getting started
+  before you hit the volume that justifies a larger box.
+- **Cheapest unit cost at scale**: H100 at p5.4xl is ~25% cheaper
+  per image than the saturated trn2.48xl. (See
+  [`native-pytorch/BENCHMARK_VS_H100.md`](native-pytorch/BENCHMARK_VS_H100.md)
+  for the full measurement methodology.)
 
 > The earlier 28-step legacy bench is preserved at the bottom of this
 > doc for historical context, but the percentages in those tables
@@ -95,7 +101,7 @@ the CPU overhead and makes the gap even wider.
               ▼                                             ▼
        native-pytorch/                                vllm-omni/
        trn2.48xl + prompt caching                     needs omni engine
-       4.19 s/img, $0.00078 (~25% cheaper than H100)  shared scheduler/KV
+       4.19 s/img, $0.00078 (Trainium-internal -29%)  shared scheduler/KV
                                                       + other modalities
 ```
 

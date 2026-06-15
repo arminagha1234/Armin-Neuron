@@ -8,15 +8,20 @@ the Beta 3 stack. No NxDI, no vLLM — just native PyTorch and
 
 This is the **lowest-latency path** for FLUX.2-klein on Trainium2.
 
-## Headline result (2026-06-14)
+## Headline result (2026-06-14, MEASURED)
 
 **4.19 s warm at 1024×1024, 4-step distilled, lossless quality** (std
-18.16). 1.41× faster than the prior shipped 5.92 s baseline,
-**~25% cheaper $/image than H100** at full-instance throughput
-utilization on trn2.48xlarge (32 logical cores, apples-to-apples
-4-step comparison; H100 4-step latency extrapolated from measured
-28-step at 0.218 s/step).
-Win delivered by the **VAE-on-Neuron + PAVE fixes +
+18.16). 1.41× faster than the prior shipped 5.92 s baseline — that's
+the Trainium-internal speedup, and it's real and unchanged.
+
+**Honest H100 comparison (measured 2026-06-14):** at 4-step 1024², a
+single H100 on p5.4xl Capacity Blocks runs the same model in **0.49 s
+warm / $0.00059 per image** (diffusers 0.39.0.dev), which is ~8.5×
+faster latency and ~25% cheaper $/image than our saturated trn2.48xl.
+The earlier "Trainium ~25% cheaper" claim was extrapolated from a
+6.1 s × 4/28 = 0.87 s estimate that overstated H100 latency; the
+measured 4-step number is 1.8× faster than that, which flips the
+comparison. Win delivered by the **VAE-on-Neuron + PAVE fixes +
 mixed-flag** path enabled by `--vae-on-neuron`. See
 [`MIXED_FLAG_VAE_NEURON_WIN.md`](MIXED_FLAG_VAE_NEURON_WIN.md) for the
 A/B record.
