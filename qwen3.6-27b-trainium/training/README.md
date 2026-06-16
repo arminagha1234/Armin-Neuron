@@ -13,6 +13,31 @@ loss 3.91 → 0.32, mean_token_accuracy 0.51 → 0.94
 Instance: trn2.48xlarge (16 Neuron cores), us-east-2
 ```
 
+### What's actually validated, honestly
+
+- ✅ **Training mechanism** — full 64-layer 27B hybrid loads, FSDP2-shards
+  across 16 Neuron cores, attaches PEFT-LoRA, gradients flow through both
+  DeltaNet and GQA layers, optimizer steps run, loss decreases. End-to-end.
+- ✅ **Real long-content training at seq=1024** — 5 steps, loss 0.594 → 0.076
+  on tokenized real text (791 real tokens / 1024 max), ~162 s/step warm,
+  `ACC_EXIT=0`. See `SEQ_SCALING.md` for the seq-length scan and where it walls.
+- ⏳ **Real long-content training at seq ≥ 2K** — currently OOMs. Next
+  engineering gate (mitigations: bf16 attention casts, finer activation
+  recompute, sequence parallelism).
+- ⏳ **Real-dataset convergence** — toy and synthetic data prove the loop
+  works; real customer-data fine-tuning quality is the next thing to measure.
+- ⏳ **Throughput vs reference GPU** — single warm-step times measured, no
+  H100/A100 comparison yet.
+
+### Padded-seq numbers (what the toy data trained at)
+
+The full SFT example above runs at `SEQ=500` with toy short data, padded to
+the seq length. The activation tensors are allocated at full size, but the
+actual content is short, so most attention work is over padding (and gets
+masked). The plumbing works at SEQ values up to 32K with this padded data —
+useful to know, but **not** the same as real long-context training. See
+`SEQ_SCALING.md` for the side-by-side scan.
+
 ## Architecture
 
 Qwen3.6-27B is a **hybrid linear+attention** model:
@@ -131,11 +156,15 @@ The host conda env's python works fine when launched from inside the container.
 
 | File | Role |
 |---|---|
+| `README.md` | This file — overview, status, the 4 FSDP fixes |
+| `SEQ_SCALING.md` | Honest sequence-length scaling findings (where it walls) |
 | `src/full_sft_fsdp.py` | Full 64-layer LoRA SFT script (accelerate FSDP=16) |
 | `src/launch_full_sft.sh` | Launcher with env + FSDP config derivation |
 | `src/phase2_trl_sft_reduced.py` | Reduced-layer (8) TRL SFT for quick validation |
+| `src/phase3_long_seq_scan.py` | Real-content long-seq scan (fills sequence with real tokens) |
+| `src/launch_long_sft.sh` | Launcher for the long-seq scan |
 | `src/fsdp16.yaml` | Accelerate FSDP config template (derived at launch time) |
-| `results/full_sft_result.txt` | Actual training output (loss trace) |
+| `results/full_sft_result.txt` | Actual training output (loss trace, padded seq=500) |
 
 ## Relation to inference
 
