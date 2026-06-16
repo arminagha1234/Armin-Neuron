@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/arminagha1234/Armin-Neuron/main/assets/flux2_3mp_trainium.png" alt="FLUX.2-klein-4B generated on Trainium2 at 3MP" width="55%"><br>
-  <i>FLUX.2-klein-4B at 3 MP (1792²), generated on a single Trainium2 instance.</i>
+  <em>📷 [ Trainium2 photo — placeholder ]</em><br>
+  <sub>add <code>assets/trainium.jpg</code> then replace this line with an &lt;img&gt; tag</sub>
 </p>
 
 ---
@@ -29,17 +29,15 @@ README, benchmark, source, and results.
 > code and change it, we did our job.
 
 <!--
-  OPTIONAL PERSONAL PHOTOS — these are commented out so they don't render
-  as broken images. Add the files to ./assets/, then uncomment the block:
-    assets/armin-chip.jpg  -> you holding a Trainium chip in the fab
-    assets/trainium.jpg    -> a Trainium2 board/chip (your photo, or an
-                              official AWS press image WITH attribution)
+  PERSONAL PHOTO SLOT — add assets/armin-chip.jpg, then replace the
+  placeholder below with:
+  <p align="center"><img src="assets/armin-chip.jpg" alt="Armin Aghebrahim holding a Trainium2 chip" width="55%"></p>
+-->
 
 <p align="center">
-  <img src="assets/armin-chip.jpg" alt="Holding a Trainium chip" width="55%"><br>
-  <i>↑ the human who keeps telling the instances "keep going"</i>
+  <em>🧑‍🔧 [ Armin Aghebrahim holding a Trainium2 chip — placeholder ]</em><br>
+  <sub>add <code>assets/armin-chip.jpg</code> and swap this line for an &lt;img&gt; tag</sub>
 </p>
--->
 
 ---
 
@@ -62,7 +60,7 @@ actually needs at high token counts) finally fit. 3 MP went from a blank
 gray field to a real image. → [`flux2-klein-4b/`](flux2-klein-4b/)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/arminagha1234/Armin-Neuron/main/assets/flux2_resolution_progress.png" alt="FLUX.2 resolution / precision / TP progress" width="90%">
+  <em>📊 [ resolution / precision / TP progress chart — placeholder ]</em>
 </p>
 
 ---
