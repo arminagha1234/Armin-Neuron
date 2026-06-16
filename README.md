@@ -1,12 +1,3 @@
-<!--
-  IMAGE SLOTS — drop your files into ./assets/ with these exact names and
-  they'll show up automatically (no other edits needed):
-    assets/trainium.jpg    -> a Trainium2 board / chip photo
-    assets/armin-chip.jpg  -> the one of you holding a chip in the fab
-  Until then, GitHub shows the alt-text placeholder. See the note at the
-  bottom for sourcing the Trainium image with proper attribution.
--->
-
 <h1 align="center">🧠⚡ Armin-Neuron</h1>
 
 <p align="center">
@@ -16,7 +7,8 @@
 </p>
 
 <p align="center">
-  <img src="assets/trainium.jpg" alt="AWS Trainium2 — drop assets/trainium.jpg here" width="70%">
+  <img src="assets/flux2_3mp_trainium.png" alt="FLUX.2-klein-4B generated on Trainium2 at 3MP" width="55%"><br>
+  <i>FLUX.2-klein-4B at 3 MP (1792²), generated on a single Trainium2 instance.</i>
 </p>
 
 ---
@@ -36,10 +28,18 @@ README, benchmark, source, and results.
 > Built by the **Build on Trainium** crew. If a researcher can read the
 > code and change it, we did our job.
 
+<!--
+  OPTIONAL PERSONAL PHOTOS — these are commented out so they don't render
+  as broken images. Add the files to ./assets/, then uncomment the block:
+    assets/armin-chip.jpg  -> you holding a Trainium chip in the fab
+    assets/trainium.jpg    -> a Trainium2 board/chip (your photo, or an
+                              official AWS press image WITH attribution)
+
 <p align="center">
-  <img src="assets/armin-chip.jpg" alt="Me holding a Trainium chip — drop assets/armin-chip.jpg here" width="55%"><br>
+  <img src="assets/armin-chip.jpg" alt="Holding a Trainium chip" width="55%"><br>
   <i>↑ the human who keeps telling the instances "keep going"</i>
 </p>
+-->
 
 ---
 
@@ -60,6 +60,10 @@ projections into separately-shardable linears so the **whole** model
 shards — not just attention heads. That let fp32 (the precision the model
 actually needs at high token counts) finally fit. 3 MP went from a blank
 gray field to a real image. → [`flux2-klein-4b/`](flux2-klein-4b/)
+
+<p align="center">
+  <img src="assets/flux2_resolution_progress.png" alt="FLUX.2 resolution / precision / TP progress" width="90%">
+</p>
 
 ---
 
@@ -112,19 +116,17 @@ launch command, and benchmark numbers.
 
 ---
 
-## 🖼️ Adding the photos
+## 🖼️ Want your own photos in here?
 
-This README expects two images in `assets/`:
+The header currently uses a real FLUX.2 image we generated on Trainium.
+If you'd rather add personal/hardware photos:
 
-1. **`assets/trainium.jpg`** — a Trainium2 board/chip shot. Use your own
-   photo, or an official AWS press image **with attribution** (e.g. the
-   AWS Newsroom / re:Invent media kit). Don't commit images you don't
-   have rights to.
-2. **`assets/armin-chip.jpg`** — your fab/chip selfie. Drop it in and it
-   shows up here automatically.
+1. Drop the files into `assets/` (e.g. `armin-chip.jpg`, `trainium.jpg`).
+2. Uncomment the photo block near the top of this README.
 
-Filenames must match exactly. JPG or PNG both fine (update the extension
-in the `<img>` tags if you use PNG).
+Use your own photos, or official AWS press images **with attribution**
+(AWS Newsroom / re:Invent media kit). Don't commit images you don't have
+rights to.
 
 ---
 
