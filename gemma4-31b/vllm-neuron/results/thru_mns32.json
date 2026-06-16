@@ -1,0 +1,27 @@
+{
+  "model": "/root/.cache/huggingface/hub/models--google--gemma-4-31b-it/snapshots/3548789868c5356dbf307c98e6f609007b82b3eb",
+  "input_tokens": 1024,
+  "output_tokens": 256,
+  "results": [
+    {
+      "concurrency": 4,
+      "requests": 8,
+      "wall_s": 382.25,
+      "out_tokens": 2048,
+      "tokens_per_s": 5.4,
+      "tokens_per_min": 321,
+      "avg_latency_s": 191.12
+    },
+    {
+      "concurrency": 32,
+      "requests": 64,
+      "wall_s": 577.55,
+      "out_tokens": 16384,
+      "tokens_per_s": 28.4,
+      "tokens_per_min": 1702,
+      "avg_latency_s": 246.76
+    }
+  ],
+  "max_tokens_per_min": 1702,
+  "max_at_concurrency": 32
+}

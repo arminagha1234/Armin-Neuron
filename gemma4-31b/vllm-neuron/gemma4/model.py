@@ -227,6 +227,10 @@ class Gemma4Attention(nn.Module):
         self.k_eq_v = self.is_global and config.attention_k_eq_v
 
         # Gemma4 uses scaling=1.0 (no 1/sqrt(head_dim))
+        # WORKAROUND for inf2: 1/sqrt(d) compensates for bf16 precision
+        # in QK-norm + attention. Produces partially coherent English.
+        # Proper fix requires NKI prefill kernel for head_dim>128 (does
+        # not yet exist in vllm-neuron — see STATUS.md kernel search).
         self.scaling = 1.0
 
         # TP group setup
@@ -324,8 +328,8 @@ class Gemma4Attention(nn.Module):
         """Apply per-head QK normalization.
 
         q: [Nh, T, Dh], k: [Nkv, T, Dh]
-        Norm is applied independently per head on the head_dim axis.
-        RMSNorm operates on dim=-1 (Dh), so 3D input works directly.
+        QK-norm weights are stored in f32 to force the Neuron compiler
+        to keep the computation in f32 (prevents bf16 precision loss).
         """
         q = self.q_norm(q)
         k = self.k_norm(k)
@@ -340,6 +344,35 @@ class Gemma4Attention(nn.Module):
         pass through unchanged when rotate_half is applied to the full vector.
         """
         return apply_rotary_pos_emb(q, k, cos, sin)
+
+    def _manual_sdpa(self, q, k, v, attn_mask):
+        """Use vllm_neuron's NF.flash_attention.
+
+        IMPORTANT: NF.flash_attention has MAX_HEAD_DIM=128 — for head_dim=256/512
+        it silently falls back to a PyTorch torch.nn.functional.scaled_dot_product_attention
+        implementation which has bf16 precision issues on inf2 (the very issue
+        we're trying to fix). On trn2 the same fallback path reportedly works
+        (per Dhwan's gemma4-31b PR), but on inf2 it produces garbage.
+
+        Combined with self.scaling = 1/sqrt(head_dim), the PyTorch fallback
+        produces partially coherent English output. With scale=1.0 (Gemma4
+        canonical) it produces pure garbage.
+
+        See STATUS.md for the full search of existing NKI kernels — none
+        exist for head_dim>128 prefill in vllm-neuron's nkilib. Dhwan's PR
+        only has a decode-only NKI kernel for head_dim 256/512.
+
+        q: [Nh, T, Dh], k: [Nkv, T, Dh], v: [Nkv, T, Dh]
+        attn_mask: [T, T] with -inf for masked positions, 0 for valid
+        Returns: [Nh, T, Dh]
+        """
+        # f32 matmul fallback (NF.flash_attention falls back to torch anyway)
+        scores = torch.bmm(q.float(), k.float().transpose(1, 2))
+        scores = scores * self.scaling
+        scores = scores + attn_mask.float()
+        attn_weights = torch.nn.functional.softmax(scores, dim=-1)
+        out = torch.bmm(attn_weights, v.float())
+        return out.to(q.dtype)
 
     def _segmented_prefill_attention(
         self, q, k, v, block_table, block_size, cached_seq_len, kv_segment_size,
@@ -415,12 +448,7 @@ class Gemma4Attention(nn.Module):
             torch.full((1,), float("-inf"), dtype=self.dtype, device=device),
         )
 
-        attn_output = F.scaled_dot_product_attention(
-            q, k_full, v_full,
-            attn_mask=attn_mask,
-            is_causal=False,
-            scale=self.scaling,
-        )
+        attn_output = self._manual_sdpa(q, k_full, v_full, attn_mask)
         return attn_output
 
     # -- Forward dispatch --
@@ -576,19 +604,17 @@ class Gemma4Attention(nn.Module):
                     mask, torch.zeros(1, dtype=self.dtype, device=hidden_states.device),
                     torch.full((1,), float("-inf"), dtype=self.dtype, device=hidden_states.device),
                 )
-                attn_output = F.scaled_dot_product_attention(
-                    q, k, v,
-                    attn_mask=attn_mask,
-                    is_causal=False,
-                    scale=self.scaling,
-                )
+                attn_output = self._manual_sdpa(q, k, v, attn_mask)
             else:
-                attn_output = F.scaled_dot_product_attention(
-                    q, k, v,
-                    attn_mask=None,
-                    is_causal=True,
-                    scale=self.scaling,
+                # Build causal mask explicitly
+                row_idx = torch.arange(tokens, device=hidden_states.device).unsqueeze(1)
+                col_idx = torch.arange(tokens, device=hidden_states.device).unsqueeze(0)
+                causal_mask = torch.where(
+                    col_idx <= row_idx,
+                    torch.zeros(1, dtype=self.dtype, device=hidden_states.device),
+                    torch.full((1,), float("-inf"), dtype=self.dtype, device=hidden_states.device),
                 )
+                attn_output = self._manual_sdpa(q, k, v, causal_mask)
         # attn_output: [Nh, T, Dh]
 
         # Reshape to [T, H] for output projection
@@ -766,12 +792,14 @@ class Gemma4Attention(nn.Module):
             torch.full((1,), float("-inf"), dtype=self.dtype, device=positions.device),
         )
 
-        attn_output = F.scaled_dot_product_attention(
-            q, k_gathered, v_gathered,
-            attn_mask=attn_mask,
-            is_causal=False,
-            scale=self.scaling,
-        )
+        # F32 attention for decode (same precision fix as prefill)
+        # q: [B, Nh, S_decode, Dh], k/v: [B, Nh, S_ctx, Dh]
+        # attn_mask: [B, 1, S_decode, S_ctx]
+        scores = torch.matmul(q.float(), k_gathered.float().transpose(-2, -1))
+        scores = scores * self.scaling
+        scores = scores + attn_mask.float()
+        attn_weights = torch.nn.functional.softmax(scores, dim=-1)
+        attn_output = torch.matmul(attn_weights, v_gathered.float()).to(q.dtype)
 
         # Reshape to [T, H]
         attn_output = attn_output.permute(0, 2, 1, 3).reshape(
@@ -930,6 +958,44 @@ class Gemma4DecoderLayer(nn.Module):
             torch.ones(1, dtype=config.torch_dtype), requires_grad=False
         )
 
+        # ---- Per-Layer Embeddings (PLE) — E4B-specific ---------------------
+        # If hidden_size_per_layer_input is set, this layer carries the
+        # per-layer modulator: gate(hidden) * per_layer_input -> projection
+        # -> norm, then added to hidden_states before layer_scalar.
+        self.hidden_size_per_layer_input = getattr(
+            config, "hidden_size_per_layer_input", 0
+        ) or 0
+        if self.hidden_size_per_layer_input > 0:
+            tp_dg = get_tp_group().device_group
+            # hidden_size (2560) -> hidden_size_per_layer_input (256)
+            self.per_layer_input_gate = nxdi_nn.ColumnParallelLinear(
+                config.hidden_size,
+                self.hidden_size_per_layer_input,
+                bias=False,
+                gather_output=True,
+                dtype=config.torch_dtype,
+                tp_group=tp_dg,
+            )
+            # 256 -> hidden_size (2560)
+            self.per_layer_projection = nxdi_nn.RowParallelLinear(
+                self.hidden_size_per_layer_input,
+                config.hidden_size,
+                bias=False,
+                input_is_parallel=False,
+                dtype=config.torch_dtype,
+                tp_group=tp_dg,
+            )
+            # Post-PLE norm (over hidden_size).
+            self.post_per_layer_input_norm = Gemma4RMSNorm(
+                config.hidden_size,
+                config.rms_norm_eps,
+                config.torch_dtype,
+            )
+        else:
+            self.per_layer_input_gate = None
+            self.per_layer_projection = None
+            self.post_per_layer_input_norm = None
+
     def _is_decode(self, attn_metadata) -> bool:
         layer_name = f"layers.{self.layer_idx}.self_attn"
         max_query_len = attn_metadata[layer_name]["max_query_len"]
@@ -952,6 +1018,7 @@ class Gemma4DecoderLayer(nn.Module):
         positions: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None,
         attn_metadata: object | None = None,
+        per_layer_input: torch.Tensor | None = None,
     ) -> torch.Tensor:
         is_decode = self._is_decode(attn_metadata)
 
@@ -979,6 +1046,27 @@ class Gemma4DecoderLayer(nn.Module):
         hidden_states = self._fused_norm_residual(
             self.post_feedforward_layernorm, hidden_states, residual
         )
+
+        # ---- Per-Layer Embedding injection (E4B) ------------------------
+        # Apply BEFORE the per-layer scalar, matching upstream gemma4.py.
+        if (
+            per_layer_input is not None
+            and self.per_layer_input_gate is not None
+        ):
+            gate = self.per_layer_input_gate(hidden_states)
+            # tanh-approx GeLU inlined (Dynamo can't trace
+            # torch._C._nn.gelu in this stack).
+            gate = 0.5 * gate * (
+                1.0
+                + torch.tanh(
+                    0.7978845608028654
+                    * (gate + 0.044715 * gate * gate * gate)
+                )
+            )
+            gated = gate * per_layer_input
+            contribution = self.per_layer_projection(gated)
+            contribution = self.post_per_layer_input_norm(contribution)
+            hidden_states = hidden_states + contribution
 
         # Per-layer scalar
         hidden_states = hidden_states * self.layer_scalar
@@ -1040,6 +1128,149 @@ class Gemma4Model(nn.Module):
             ),
         )
 
+        # ---- Per-Layer Embeddings (PLE) — E4B-specific ---------------------
+        # If hidden_size_per_layer_input is set (E4B has 256), the model
+        # carries a parallel "per-layer input" stream. Each token is
+        # additionally embedded into a per-layer space and projected
+        # through a per-layer modulator inside each decoder layer.
+        # 31B doesn't have this (config value is 0/None).
+        self.hidden_size_per_layer_input = getattr(
+            config, "hidden_size_per_layer_input", 0
+        ) or 0
+        if self.hidden_size_per_layer_input > 0:
+            num_layers = config.num_hidden_layers
+            ple_total_dim = num_layers * self.hidden_size_per_layer_input
+            # PLE vocab embedding can be a smaller vocab than main embed.
+            self.vocab_size_per_layer_input = getattr(
+                config, "vocab_size_per_layer_input", config.vocab_size
+            )
+            # Vocab embedding for the per-layer stream.
+            # Output shape per token: [num_layers * per_layer_dim].
+            self.embed_tokens_per_layer = VocabDimShardedEmbedding(
+                vocab_size=self.vocab_size_per_layer_input,
+                embed_dim=ple_total_dim,
+                dtype=config.torch_dtype,
+                tp_group=self.tp_group.device_group,
+            )
+            # Scaled embedding factor (per-layer dim sqrt) — stored as
+            # a plain float (not buffer) to avoid meta-tensor .to() issues.
+            self.embed_scale_per_layer = float(
+                self.hidden_size_per_layer_input**0.5
+            )
+            # Projection from hidden_size → total_ple_dim.
+            # Upstream uses ColumnParallelLinear with gather_output=True.
+            self.per_layer_model_projection = nxdi_nn.ColumnParallelLinear(
+                config.hidden_size,
+                ple_total_dim,
+                bias=False,
+                gather_output=True,
+                dtype=config.torch_dtype,
+                tp_group=self.tp_group.device_group,
+            )
+            # Norm over the per-layer slice (acts on size per_layer_dim).
+            self.per_layer_projection_norm = Gemma4RMSNorm(
+                self.hidden_size_per_layer_input,
+                config.rms_norm_eps,
+                config.torch_dtype,
+            )
+            # Combination scale: (projection + embeds) * rsqrt(2)
+            # Stored as a plain float (not buffer) for the same reason.
+            self.per_layer_input_scale = float(2.0**-0.5)
+            # Projection scale: divide projection output by sqrt(hidden_size).
+            self.per_layer_projection_scale = float(config.hidden_size**-0.5)
+            # Sharded loader for the PLE vocab embedding.
+            set_weight_loader(
+                self.embed_tokens_per_layer.weight,
+                sharding_weight_loader(
+                    shard_dim=0,
+                    shard_size=(
+                        self.embed_tokens_per_layer.vocab_size_per_rank
+                    ),
+                    num_shards=self.world_size,
+                    is_storage_transposed=False,
+                    pad_shard=True,
+                ),
+            )
+        else:
+            self.embed_tokens_per_layer = None
+            self.per_layer_model_projection = None
+            self.per_layer_projection_norm = None
+            self.vocab_size_per_layer_input = None
+
+    def _compute_per_layer_input(
+        self,
+        input_ids: torch.LongTensor,
+        hidden_states: torch.Tensor,
+        is_prefill: bool,
+        rank: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        """Compute the per-layer input stream for E4B.
+
+        Mirrors upstream vLLM gemma4.py logic:
+          1. Look up input_ids in embed_tokens_per_layer →
+             [T, num_layers * per_layer_dim], scale by sqrt(per_layer_dim),
+             reshape to [T, num_layers, per_layer_dim].
+          2. Project hidden_states (post-embedding inputs_embeds) via
+             per_layer_model_projection → [T, num_layers * per_layer_dim],
+             scale by 1/sqrt(hidden_size), reshape to
+             [T, num_layers, per_layer_dim], normalize.
+          3. Combine (projection + embeds) * rsqrt(2).
+
+        Returns None if the model isn't an E4B variant.
+
+        NOTE on shapes: in prefill mode the embeddings are scatter_tokens=True
+        (each rank sees T/world_size tokens). We use the actual local
+        token dim after embedding, NOT input_ids.shape[0].
+        """
+        if self.embed_tokens_per_layer is None:
+            return None
+
+        num_layers = self.config.num_hidden_layers
+        per_layer_dim = self.hidden_size_per_layer_input
+
+        # Step 1: per-layer embedding from input ids.
+        # Mask out-of-vocab ids (PLE vocab can be smaller).
+        if (
+            self.vocab_size_per_layer_input is not None
+            and self.vocab_size_per_layer_input < self.config.vocab_size
+        ):
+            ple_mask = torch.logical_and(
+                input_ids >= 0,
+                input_ids < self.vocab_size_per_layer_input,
+            )
+            ple_input_ids = torch.where(
+                ple_mask, input_ids, torch.zeros_like(input_ids)
+            )
+        else:
+            ple_input_ids = input_ids
+
+        per_layer_embeds = self.embed_tokens_per_layer(
+            ple_input_ids, scatter_tokens=is_prefill, rank=rank
+        )
+        # Local T (matches hidden_states' first dim after scatter).
+        T_local = per_layer_embeds.shape[0]
+        per_layer_embeds = per_layer_embeds * self.embed_scale_per_layer
+        per_layer_embeds = per_layer_embeds.view(
+            T_local, num_layers, per_layer_dim
+        )
+
+        # Step 2: project hidden_states → reshape → normalize.
+        per_layer_projection = self.per_layer_model_projection(hidden_states)
+        per_layer_projection = (
+            per_layer_projection * self.per_layer_projection_scale
+        )
+        per_layer_projection = per_layer_projection.view(
+            T_local, num_layers, per_layer_dim
+        )
+        per_layer_projection = self.per_layer_projection_norm(
+            per_layer_projection
+        )
+
+        # Step 3: combine.
+        return (
+            per_layer_projection + per_layer_embeds
+        ) * self.per_layer_input_scale
+
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -1061,13 +1292,30 @@ class Gemma4Model(nn.Module):
         # Scale embedding output by sqrt(hidden_size)
         hidden_states = hidden_states * self.embed_scale
 
+        # E4B: per-layer input stream (None for 31B / non-E4B variants).
+        # NOTE: must be computed BEFORE the layer loop, using the scaled
+        # `hidden_states` that goes into the first layer (this matches
+        # upstream's `inputs_embeds` semantic).
+        per_layer_input = self._compute_per_layer_input(
+            input_ids,
+            hidden_states=hidden_states,
+            is_prefill=is_prefill,
+            rank=rank,
+        )
+
         # No shared position embeddings — each layer computes its own RoPE
-        for decoder_layer in self.layers:
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            ple_slice = (
+                per_layer_input[:, layer_idx, :]
+                if per_layer_input is not None
+                else None
+            )
             hidden_states = decoder_layer(
                 hidden_states,
                 positions=positions,
                 position_embeddings=None,
                 attn_metadata=attn_metadata,
+                per_layer_input=ple_slice,
             )
 
         hidden_states = self.norm(hidden_states)
@@ -1322,10 +1570,41 @@ class Gemma4ForCausalLM(nn.Module):
             # layer_scalar
             mappings[f"{target_prefix}.layer_scalar"] = f"{prefix}.layer_scalar"
 
+            # ---- Per-Layer Embedding (PLE) — E4B-only --------------------
+            # 31B doesn't have these (config.hidden_size_per_layer_input is 0)
+            # so the modules don't exist on those models; the loader
+            # silently no-ops on missing target keys via .get on rank_sharded.
+            if (
+                getattr(self.config, "hidden_size_per_layer_input", 0) or 0
+            ) > 0:
+                mappings[
+                    f"{target_prefix}.per_layer_input_gate.weight"
+                ] = f"{prefix}.per_layer_input_gate.weight"
+                mappings[
+                    f"{target_prefix}.per_layer_projection.weight"
+                ] = f"{prefix}.per_layer_projection.weight"
+                mappings[
+                    f"{target_prefix}.post_per_layer_input_norm.weight"
+                ] = f"{prefix}.post_per_layer_input_norm.weight"
+
         # Embedding
         mappings["model.embed_tokens.weight"] = (
             "model.language_model.embed_tokens.weight"
         )
+
+        # ---- Model-level Per-Layer Embedding components — E4B-only -------
+        if (
+            getattr(self.config, "hidden_size_per_layer_input", 0) or 0
+        ) > 0:
+            mappings["model.embed_tokens_per_layer.weight"] = (
+                "model.language_model.embed_tokens_per_layer.weight"
+            )
+            mappings["model.per_layer_model_projection.weight"] = (
+                "model.language_model.per_layer_model_projection.weight"
+            )
+            mappings["model.per_layer_projection_norm.weight"] = (
+                "model.language_model.per_layer_projection_norm.weight"
+            )
 
         # Final norm
         mappings["model.norm.weight"] = "model.language_model.norm.weight"

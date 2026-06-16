@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""TTFT benchmark for Gemma4 31B on vLLM-Neuron vs Hippocratic's 500 ms target.
+"""TTFT benchmark for Gemma4 31B on vLLM-Neuron vs the 500 ms latency target.
 
 Streaming completions, unique random-token prompts (no prefix-cache inflation),
 median of N runs per sequence length. JSON out. Mirrors the Llama70B repro
-harness in customers/Hippocratic/vllm-neuron-llama70b-README.md.
+harness used for the Llama-70B latency study.
 
 Run INSIDE the container after the server is up:
     python3 /work/bench_ttft.py --model google/gemma-4-31b-it \

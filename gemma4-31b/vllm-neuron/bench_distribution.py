@@ -4,7 +4,7 @@
 Measures TTFT at the input sizes that match a customer's payload mix and
 computes a weighted-average TTFT.
 
-Default distribution (Hippocratic-style):
+Default distribution (representative customer mix):
   <=0.5K  24.8%   <=1K  53.1%   <=2K  9.5%   <=4K  12.7%
 
 Run inside the container after the server is up:

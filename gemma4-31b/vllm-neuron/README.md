@@ -2,8 +2,15 @@
 
 Serve Google's Gemma 4 31B IT on a trn2.48xlarge using the vLLM-Neuron plugin.
 
-**172 ms weighted-average TTFT** on a real customer payload distribution
-(TP=32, multi-bucket `[512, 1024, 2048, 4096]`).
+**121 ms weighted-average TTFT** on a real customer payload distribution, and
+up to **42.8 tok/s** aggregate throughput under the 174 ms TTFT target
+(TP=32, multi-bucket `[512, 1024, 2048, 4096]`, `max_num_seqs=16`).
+
+> **Update 2026-06-16:** ships the updated model code (`gemma4/model.py` +
+> new `gemma4/attention_decode_kernel.py`) and a full `max_num_seqs`
+> throughput sweep. Weighted TTFT improved from 172 ms → 121 ms at the same
+> config, and best throughput under the TTFT target rose from 11.6 → 42.8
+> tok/s by tuning `max_num_seqs`. See [Changelog](#changelog-2026-06-16).
 
 ---
 
@@ -15,44 +22,43 @@ on-device greedy sampling. Raw JSONs in [`results/`](results/).
 ### Distribution-aware TTFT (matches a real customer payload mix)
 
 Customer's payload distribution: 24.8% ≤0.5K, 53.1% ≤1K, 9.5% ≤2K, 12.7% ≤4K.
+Measured with the updated code at `max_num_seqs=4`, multi-bucket. Raw data in
+[`results/dist_mns4.json`](results/dist_mns4.json).
 
-| Bucket | Share of traffic | Multi-bucket TTFT | Single-bucket [4096] TTFT |
-|---:|---:|---:|---:|
-| ≤0.5K | 24.8% | **102.1 ms** | 290 ms |
-| ≤1K | 53.1% | **153.8 ms** | 290 ms |
-| ≤2K | 9.5% | **288.3 ms** | 290 ms |
-| ≤4K | 12.7% | **295.9 ms** | 290 ms |
-| **Weighted average** | 100% | **🎯 172.0 ms** | 290.5 ms |
+| Bucket | Share of traffic | Multi-bucket TTFT |
+|---:|---:|---:|
+| ≤0.5K | 24.8% | **78.1 ms** |
+| ≤1K | 53.1% | **101.0 ms** |
+| ≤2K | 9.5% | **149.1 ms** |
+| ≤4K | 12.7% | **265.7 ms** |
+| **Weighted average** | 100% | **🎯 120.9 ms** |
 
-**Multi-bucket cuts effective TTFT by 41% on this customer's traffic mix.**
+Weighted TTFT stays flat (~121 ms) across the whole `max_num_seqs` sweep
+(4/8/16/32 → 120.9 / 123.7 / 120.8 / 121.7 ms) — decode batch size does not
+affect prefill TTFT. See `results/dist_mns{4,8,16,32}.json`.
 
 
-### Single-bucket configs (when context is fixed)
+### Throughput vs `max_num_seqs` (TP=32, multi-bucket, in=1024 / out=256)
 
-| Input | TP | Bucket | TTFT (median) | Status |
-|---:|---:|---:|---:|---|
-| ≤1K | 32 | `[1024]` | **102 ms** | ✅ best for short prompts |
-| 4K | 32 | `[4096]` | 293 ms | ✅ 41% under 500 ms target |
-| 4K | 16 | `[4096]` | 452 ms | passes target |
-| 8K | 32 | `[8192]` | 659 ms | ❌ 32% over target |
+> Per-request decode (TPOT) is bound at ~2.9 tok/s by the head_dim>128 SDPA
+> decode path. Aggregate throughput scales with `max_num_seqs` (more sequences
+> decode in parallel) until the KV-cache ceiling. At `max_model_len=4096` the
+> scheduler caps effective concurrency at **~23 requests**; setting
+> `max_num_seqs=32` exceeds that and the server regresses on preemption.
 
-### Throughput (TP=32, single-bucket [4096], in=1024 / out=256)
+| max_num_seqs | Weighted TTFT | Aggregate throughput | Per-req decode | vs baseline | Note |
+|---:|---:|---:|---:|---:|---|
+| 4 (prior baseline) | 120.9 ms | 11.6 tok/s | 2.9 tok/s | 1.0× | KV ceiling not hit |
+| 8 | 123.7 ms | 22.9 tok/s | 2.9 tok/s | 2.0× | scales linearly |
+| **16** | **120.8 ms** | **42.8 tok/s** | 2.7 tok/s | **3.7×** | ✅ optimum under target |
+| 32 | 121.7 ms | 28.4 tok/s | — | 2.4× | ❌ regresses (KV cap ~23, preemption) |
 
-> TPOT is bound at ~343 ms/token (≈2.9 tok/s per request) by the head_dim>128
-> SDPA decode fallback. Aggregate throughput scales with `max_num_seqs` until
-> that ceiling. Above concurrency=4, requests just queue.
+Raw data in `results/thru_mns{4,8,16,32}.json`. **Recommended production
+config: `max_num_seqs=16`** — 3.7× the baseline throughput at the same 121 ms
+TTFT. To push past ~23 concurrent, raise `VLLM_NEURON_KV_GMU_BUDGET_CAP_FRACTION`
+or lower `max_model_len`.
 
-| Concurrency | Aggregate tok/s | Per-req tok/s | Per-req latency |
-|---:|---:|---:|---:|
-| 1 | 2.9 | 2.9 | 87.8 s |
-| **4** | **11.6** | **2.9** | **88.6 s** |
-| 8 | 11.6 (queued) | 1.6 | 155 s |
-| 16 | 11.6 (queued) | 0.9 | 288 s |
-
-Throughput plateaus at concurrency 4 because `max_num_seqs=4`. Concurrency 8
-and 16 don't add throughput — they just queue, and per-request latency grows
-linearly. Raise `max_num_seqs` to lift the ceiling at the cost of more
-KV-cache HBM.
+Reproduce the whole sweep with [`sweep_maxnumseqs.sh`](sweep_maxnumseqs.sh).
 
 ### Generation Proof
 
@@ -296,26 +302,72 @@ Every file below is on the live serve/bench path. No dead code.
 ├── gemma4_register.py               # Registers Gemma4ForConditionalGeneration in vLLM's ModelRegistry
 ├── gemma4/                          # Model package — the runtime path
 │   ├── __init__.py                  # exports the arch class
+│   ├── README.md                    # model architecture notes
 │   ├── factory.py                   # Gemma4ForConditionalGeneration (vLLM-facing wrapper)
 │   ├── config.py                    # Gemma4Config + NeuronConfig glue
+│   ├── attention_decode_kernel.py   # decode-attention kernel
 │   └── model.py                     # The actual model: TP-sharded SWA+Global attn, GeGLU MLP,
 │                                    #   QK/V norm, partial RoPE, logit softcap, weight loading.
 │                                    #   Calls vllm_neuron.functional (NF.qkv_proj, NF.flash_attention,
 │                                    #   NF.attention_decode, NF.o_proj, etc.).
 ├── make_local_model.py              # One-time: build /root/models/gemma-4-31b-it with patched tokenizer
+├── sweep_maxnumseqs.sh              # max_num_seqs throughput sweep orchestrator (runs in-container)
 ├── bench_ttft.py                    # → ttft_single_bucket_*.json, ttft_multi_bucket*.json, ttft_8k_clean.json
-├── bench_distribution.py            # → ttft_distribution.json (the 172 ms weighted-avg headline)
-├── bench_throughput.py              # → throughput.json (the concurrency sweep)
-└── results/                         # Raw measurement JSONs from the three bench scripts above
-    ├── ttft_single_bucket_1k.json   # TP=32, [1024] bucket scan
-    ├── ttft_single_bucket_4k.json   # TP=32, [4096] flat 290 ms scan
-    ├── ttft_multi_bucket.json       # TP=32, [512,1024,2048,4096] per-bucket scan
-    ├── ttft_multi_bucket_4k_clean.json  # 4K-only re-measure with multi-bucket NEFFs warm
-    ├── ttft_8k_clean.json           # TP=32, [8192] bucket measurement
-    ├── ttft_distribution.json       # Weighted-avg summary (172 ms headline)
-    ├── throughput.json              # Concurrency sweep (TP=32, in=1024 / out=256)
+├── bench_distribution.py            # → dist_mns*.json / ttft_distribution.json (weighted-avg TTFT)
+├── bench_throughput.py              # → thru_mns*.json / throughput.json (concurrency sweep)
+└── results/                         # Raw measurement JSONs
+    ├── dist_mns{4,8,16,32}.json     # weighted-avg TTFT per max_num_seqs (2026-06-16)
+    ├── thru_mns{4,8,16,32}.json     # throughput per max_num_seqs (2026-06-16)
+    ├── ttft_single_bucket_1k.json   # TP=32, [1024] bucket scan (prior)
+    ├── ttft_single_bucket_4k.json   # TP=32, [4096] flat scan (prior)
+    ├── ttft_multi_bucket.json       # TP=32, [512,1024,2048,4096] per-bucket scan (prior)
+    ├── ttft_8k_clean.json           # TP=32, [8192] bucket measurement (prior)
+    ├── ttft_distribution.json       # Prior weighted-avg summary (172 ms)
+    ├── throughput.json              # Prior concurrency sweep
     └── generation_proof.json        # End-to-end gen sample ("The capital of France is …")
 ```
+
+## Changelog (2026-06-16)
+
+This update ships the newer model code and a full `max_num_seqs` throughput
+sweep. All numbers below are TP=32, multi-bucket `[512,1024,2048,4096]`,
+trn2.48xlarge (us-east-2), vLLM-Neuron v5 beta, bf16, on-device greedy.
+
+**Code changes**
+- `gemma4/model.py` updated (1378 → 1657 lines)
+- added `gemma4/attention_decode_kernel.py` (new decode-attention kernel)
+- added `sweep_maxnumseqs.sh` (the throughput-sweep orchestrator)
+- added `results/dist_mns{4,8,16,32}.json` and `results/thru_mns{4,8,16,32}.json`
+
+**TTFT — improved ~30% at matched config (mns=4, multi-bucket)**
+
+| Bucket | Prior (2026-06-03) | This run (2026-06-16) | Δ |
+|---:|---:|---:|---:|
+| ≤0.5K | 102.1 ms | 78.1 ms | −24% |
+| ≤1K | 153.8 ms | 101.0 ms | −34% |
+| ≤2K | 288.3 ms | 149.1 ms | −48% |
+| ≤4K | 295.9 ms | 265.7 ms | −10% |
+| **Weighted** | **172.0 ms** | **120.9 ms** | **−30%** |
+
+**Throughput — best achievable under the 174 ms TTFT target**
+
+| | Prior | This run | Δ |
+|---|---:|---:|---:|
+| Best aggregate throughput | 11.6 tok/s (`mns=4`) | **42.8 tok/s (`mns=16`)** | **3.7×** |
+| Per-request decode (TPOT) | 2.9 tok/s | ~2.9 tok/s | unchanged |
+
+**Honest attribution**
+- The **TTFT gain** is measured at an identical config and bench, so it is
+  attributable to the new code (largest gain in the mid-size buckets). The
+  prior figure was measured 2026-06-03; a strict A/B (old code on this same
+  box/cache) would remove any residual run-condition confound.
+- The **throughput gain is a tuning win, not a per-token speedup.** Per-request
+  decode is still ~2.9 tok/s (the new `attention_decode_kernel.py` did not lift
+  the head_dim>128 decode bottleneck in this run). The 3.7× comes from raising
+  `max_num_seqs` from 4 to 16 — which the lower TTFT now leaves headroom for.
+- `max_num_seqs=32` **regresses** (28.4 tok/s) because the KV cache caps
+  effective concurrency at ~23 at 4K context; beyond that the server thrashes
+  on request preemption. `max_num_seqs=16` is the recommended setting.
 
 ## License
 

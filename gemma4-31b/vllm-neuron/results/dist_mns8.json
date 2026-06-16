@@ -1,0 +1,27 @@
+{
+  "model": "/root/.cache/huggingface/hub/models--google--gemma-4-31b-it/snapshots/3548789868c5356dbf307c98e6f609007b82b3eb",
+  "distribution": [
+    {
+      "size_tokens": 256,
+      "share": 0.248,
+      "ttft_ms": 78.45902442932129
+    },
+    {
+      "size_tokens": 950,
+      "share": 0.531,
+      "ttft_ms": 106.16445541381836
+    },
+    {
+      "size_tokens": 1900,
+      "share": 0.095,
+      "ttft_ms": 148.87523651123047
+    },
+    {
+      "size_tokens": 4090,
+      "share": 0.127,
+      "ttft_ms": 265.58995246887207
+    }
+  ],
+  "weighted_avg_ms": 123.7,
+  "covered_fraction": 1.001
+}
