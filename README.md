@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/flux2_3mp_trainium.png" alt="FLUX.2-klein-4B generated on Trainium2 at 3MP" width="55%"><br>
+  <img src="https://raw.githubusercontent.com/arminagha1234/Armin-Neuron/main/assets/flux2_3mp_trainium.png" alt="FLUX.2-klein-4B generated on Trainium2 at 3MP" width="55%"><br>
   <i>FLUX.2-klein-4B at 3 MP (1792²), generated on a single Trainium2 instance.</i>
 </p>
 
@@ -62,7 +62,7 @@ actually needs at high token counts) finally fit. 3 MP went from a blank
 gray field to a real image. → [`flux2-klein-4b/`](flux2-klein-4b/)
 
 <p align="center">
-  <img src="assets/flux2_resolution_progress.png" alt="FLUX.2 resolution / precision / TP progress" width="90%">
+  <img src="https://raw.githubusercontent.com/arminagha1234/Armin-Neuron/main/assets/flux2_resolution_progress.png" alt="FLUX.2 resolution / precision / TP progress" width="90%">
 </p>
 
 ---
