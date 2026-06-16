@@ -1,0 +1,19 @@
+# Qwen3.6-27B Full 64-layer LoRA SFT — Training Output
+# Date: 2026-06-16
+# Instance: trn2.48xlarge (16 Neuron cores), us-east-2
+# Config: FSDP=16, LoRA r=8, seq=500, batch=1, bf16, lr=5e-4
+# Stack: torch_neuronx 2.11.3.0.19138, neuronx-cc 2.25.3371, czkkkkkk/transformers+trl neuron branch
+
+{'loss': '3.909', 'grad_norm': '8.345', 'learning_rate': '0.0005', 'entropy': '3.094', 'num_tokens': '381', 'mean_token_accuracy': '0.5123', 'epoch': '0.3333'}
+{'loss': '2.912', 'grad_norm': '8.243', 'learning_rate': '0.00045', 'entropy': '3.141', 'num_tokens': '758', 'mean_token_accuracy': '0.6233', 'epoch': '0.6667'}
+{'loss': '2.43', 'grad_norm': '8.974', 'learning_rate': '0.0004', 'entropy': '3.406', 'num_tokens': '1136', 'mean_token_accuracy': '0.6409', 'epoch': '1'}
+{'loss': '1.741', 'grad_norm': '25.2', 'learning_rate': '0.00035', 'entropy': '3.203', 'num_tokens': '1508', 'mean_token_accuracy': '0.7107', 'epoch': '1.333'}
+{'loss': '1.265', 'grad_norm': '19.85', 'learning_rate': '0.0003', 'entropy': '2.641', 'num_tokens': '1882', 'mean_token_accuracy': '0.7654', 'epoch': '1.667'}
+{'loss': '0.7029', 'grad_norm': '14.47', 'learning_rate': '0.00025', 'entropy': '1.469', 'num_tokens': '2272', 'mean_token_accuracy': '0.8503', 'epoch': '2'}
+{'loss': '0.7559', 'grad_norm': '10.61', 'learning_rate': '0.0002', 'entropy': '1.766', 'num_tokens': '2642', 'mean_token_accuracy': '0.8418', 'epoch': '2.333'}
+{'loss': '0.2769', 'grad_norm': '2.989', 'learning_rate': '0.00015', 'entropy': '0.6641', 'num_tokens': '3032', 'mean_token_accuracy': '0.9198', 'epoch': '2.667'}
+{'loss': '0.3376', 'grad_norm': '8.058', 'learning_rate': '0.0001', 'entropy': '1.156', 'num_tokens': '3408', 'mean_token_accuracy': '0.925', 'epoch': '3'}
+{'loss': '0.3209', 'grad_norm': '11.55', 'learning_rate': '5e-05', 'entropy': '1.266', 'num_tokens': '3780', 'mean_token_accuracy': '0.9382', 'epoch': '3.333'}
+{'train_runtime': '475.3', 'train_samples_per_second': '0.337', 'train_steps_per_second': '0.021', 'train_loss': '1.465', 'epoch': '3.333'}
+FULL_SFT_RESULT first=3.9092 last=0.3209 min=0.2769 decreased=True
+ACC_EXIT=0
