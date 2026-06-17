@@ -12,6 +12,12 @@ up to **42.8 tok/s** aggregate throughput under the 174 ms TTFT target
 > config, and best throughput under the TTFT target rose from 11.6 → 42.8
 > tok/s by tuning `max_num_seqs`. See [Changelog](#changelog-2026-06-16).
 
+![old vs new](results/old_vs_new.png)
+
+![TTFT vs target](results/ttft_vs_target.png)
+
+![throughput sweep](results/throughput_sweep.png)
+
 ---
 
 ## Headline Results
@@ -32,6 +38,8 @@ Measured with the updated code at `max_num_seqs=4`, multi-bucket. Raw data in
 | ≤2K | 9.5% | **149.1 ms** |
 | ≤4K | 12.7% | **265.7 ms** |
 | **Weighted average** | 100% | **🎯 120.9 ms** |
+
+![per-bucket TTFT](results/per_bucket_ttft.png)
 
 Weighted TTFT stays flat (~121 ms) across the whole `max_num_seqs` sweep
 (4/8/16/32 → 120.9 / 123.7 / 120.8 / 121.7 ms) — decode batch size does not
