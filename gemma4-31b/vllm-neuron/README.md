@@ -29,21 +29,38 @@ on-device greedy sampling. Raw JSONs in [`results/`](results/).
 
 Customer's payload distribution: 24.8% ≤0.5K, 53.1% ≤1K, 9.5% ≤2K, 12.7% ≤4K.
 Measured with the updated code at `max_num_seqs=4`, multi-bucket. Raw data in
-[`results/dist_mns4.json`](results/dist_mns4.json).
+[`results/dist_mns4.json`](results/dist_mns4.json) and
+[`results/ttft_single_bucket_4k.json`](results/ttft_single_bucket_4k.json).
 
-| Bucket | Share of traffic | Multi-bucket TTFT |
-|---:|---:|---:|
-| ≤0.5K | 24.8% | **78.1 ms** |
-| ≤1K | 53.1% | **101.0 ms** |
-| ≤2K | 9.5% | **149.1 ms** |
-| ≤4K | 12.7% | **265.7 ms** |
-| **Weighted average** | 100% | **🎯 120.9 ms** |
+| Bucket | Share of traffic | Multi-bucket TTFT | Single-bucket [4096] TTFT |
+|---:|---:|---:|---:|
+| ≤0.5K | 24.8% | **78.1 ms** | 287.7 ms |
+| ≤1K | 53.1% | **101.0 ms** | 288.5 ms |
+| ≤2K | 9.5% | **149.1 ms** | 290.5 ms |
+| ≤4K | 12.7% | **265.7 ms** | 292.6 ms |
+| **Weighted average** | 100% | **🎯 120.9 ms** | 290.5 ms |
+
+**Multi-bucket cuts effective TTFT by 58% on this customer's traffic mix
+(290.5 ms → 120.9 ms)**, because each request lands in its smallest fitting
+NEFF instead of paying the 4K-padded cost. Weighted TTFT stays flat (~121 ms)
+across the whole `max_num_seqs` sweep (4/8/16/32 → 120.9 / 123.7 / 120.8 /
+121.7 ms) — decode batch size does not affect prefill TTFT. See
+`results/dist_mns{4,8,16,32}.json`.
 
 ![per-bucket TTFT](results/per_bucket_ttft.png)
 
-Weighted TTFT stays flat (~121 ms) across the whole `max_num_seqs` sweep
-(4/8/16/32 → 120.9 / 123.7 / 120.8 / 121.7 ms) — decode batch size does not
-affect prefill TTFT. See `results/dist_mns{4,8,16,32}.json`.
+
+### Single-bucket configs (when context is fixed)
+
+| Input | TP | Bucket | TTFT (median) | Status |
+|---:|---:|---:|---:|---|
+| ≤1K | 32 | `[1024]` | **102 ms** | ✅ best for short prompts (`results/ttft_single_bucket_1k.json`) |
+| 4K | 32 | `[4096]` | 290 ms | ✅ 42% under 500 ms target (`results/ttft_single_bucket_4k.json`) |
+| 4K | 16 | `[4096]` | 452 ms | passes 500 ms target |
+| 8K | 32 | `[8192]` | 659 ms | ❌ 32% over 500 ms target (`results/ttft_8k_clean.json`) |
+
+Use single-bucket only when context length is known and fixed. For variable
+production traffic, the multi-bucket config above is what hits 121 ms.
 
 
 ### Throughput vs `max_num_seqs` (TP=32, multi-bucket, in=1024 / out=256)
