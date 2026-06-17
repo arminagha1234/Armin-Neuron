@@ -33,13 +33,34 @@ and up to **42.8 tok/s** aggregate throughput while holding TTFT under the
 
 ## Numbers (vLLM-Neuron path)
 
-### TTFT (TP=32, multi-bucket, max_num_seqs=4)
+### Distribution-aware TTFT (matches a real customer payload mix)
 
-| Config | TP | Bucket | TTFT (weighted/median) | Notes |
+Customer's payload distribution: 24.8% ≤0.5K, 53.1% ≤1K, 9.5% ≤2K, 12.7% ≤4K.
+Measured at TP=32, multi-bucket `[512, 1024, 2048, 4096]`, `max_num_seqs=4`.
+Raw data in [`vllm-neuron/results/dist_mns4.json`](vllm-neuron/results/dist_mns4.json)
+and [`vllm-neuron/results/ttft_single_bucket_4k.json`](vllm-neuron/results/ttft_single_bucket_4k.json).
+
+| Bucket | Share of traffic | Multi-bucket TTFT | Single-bucket [4096] TTFT |
+|---:|---:|---:|---:|
+| ≤0.5K | 24.8% | **78.1 ms** | 287.7 ms |
+| ≤1K | 53.1% | **101.0 ms** | 288.5 ms |
+| ≤2K | 9.5% | **149.1 ms** | 290.5 ms |
+| ≤4K | 12.7% | **265.7 ms** | 292.6 ms |
+| **Weighted average** | 100% | **🎯 120.9 ms** | 290.5 ms |
+
+**Multi-bucket cuts effective TTFT by 58% on this customer's traffic mix
+(290.5 ms → 120.9 ms)** — each request lands in its smallest fitting NEFF
+instead of paying the 4K-padded cost.
+
+![per-bucket TTFT](vllm-neuron/results/per_bucket_ttft.png)
+
+### TTFT — single-bucket configs (when context is fixed)
+
+| Config | TP | Bucket | TTFT (median) | Notes |
 |---|---:|---:|---:|---|
 | Distribution-weighted | 32 | `[512,1024,2048,4096]` | **121 ms** | real customer payload mix |
 | ≤1K prompts | 32 | `[1024]` | **102 ms** | best for short prompts |
-| 4K | 32 | `[4096]` | 266 ms | under 500 ms target |
+| 4K | 32 | `[4096]` | 290 ms | under 500 ms target |
 | 8K | 32 | `[8192]` | 659 ms | 32% over target |
 
 ### Throughput vs max_num_seqs (TP=32, multi-bucket, in=1024 / out=256)
