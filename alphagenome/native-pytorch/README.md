@@ -14,6 +14,23 @@ order. Every command is copy-paste.
 
 ---
 
+## ⚠️ Two important prerequisites (read first)
+
+### 1. Instance: launch a `trn2.3xlarge`
+AlphaGenome is small (~230M params) and runs on a **single Trainium2 chip**, so a
+**`trn2.3xlarge`** (the smallest trn2 slice) is the right, cheap choice — you do
+**not** need a `trn2.48xlarge`.
+
+### 2. Software: you need the **native-PyTorch Neuron beta** — NOT the public beta
+This was developed and validated against the **native-PyTorch Neuron beta** (Beta 3)
+toolchain, not the public Neuron SDK release. The public beta does **not** have
+everything this model needs to compile and run at the full 131,072-bp window. Make
+sure the instance/AMI is provisioned with the **native-PyTorch beta** Neuron stack
+before you start. If unsure which build you have, check with whoever provisioned the
+box — the public release will not work for this model.
+
+---
+
 ## What you get
 
 | Output head | What it predicts | Shape (at 131,072 bp) |
@@ -33,20 +50,16 @@ Speed after the one-time compile: **~3 seconds** per 131,072-bp sequence.
 
 ---
 
-## Step 0 — Launch a Trainium instance (one time)
+## Step 0 — Launch the instance (one time)
 
-1. In the AWS Console, launch an **EC2 instance** of type **`trn2.48xlarge`**
-   (Trainium2). A smaller `trn1`/`inf2` also works for shorter sequences, but this
-   guide assumes trn2.
-2. For the AMI, pick the **"Deep Learning AMI Neuron (Ubuntu 22.04/24.04)"** — search
-   "Neuron" in the AMI catalog. This AMI comes with the Neuron drivers and Python
-   environments pre-installed, so you skip all driver setup.
+1. In the AWS Console, launch an **EC2 `trn2.3xlarge`** (Trainium2). One chip is
+   enough for AlphaGenome — a 48xlarge is unnecessary.
+2. Use an AMI provisioned with the **native-PyTorch Neuron beta** (see prerequisite 2
+   above). The public "Deep Learning AMI Neuron" release is **not** sufficient for
+   this model.
 3. Give it a key pair you have (e.g. `mykey.pem`) and at least 200 GB of disk.
 4. Launch, and note the instance's **Public DNS** (looks like
-   `ec2-XX-XX-XX-XX.us-east-2.compute.amazonaws.com`).
-
-> If your AMI does **not** have Neuron pre-installed, follow the official setup once:
-> https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/setup/neuron-setup/
+   `ec2-XX-XX-XX-XX.<region>.compute.amazonaws.com`).
 
 ---
 
@@ -55,7 +68,7 @@ Speed after the one-time compile: **~3 seconds** per 131,072-bp sequence.
 From your laptop terminal:
 
 ```bash
-ssh -i /path/to/mykey.pem ubuntu@ec2-XX-XX-XX-XX.us-east-2.compute.amazonaws.com
+ssh -i /path/to/mykey.pem ubuntu@ec2-XX-XX-XX-XX.<region>.compute.amazonaws.com
 ```
 
 You're now on the Trainium machine. All remaining steps run **on the instance**.
@@ -72,17 +85,19 @@ cd ~/alphagenome
 
 ---
 
-## Step 3 — Turn on the Neuron Python environment
+## Step 3 — Turn on the native-PyTorch Neuron environment
 
-The Neuron AMI ships ready-made Python environments. Activate the PyTorch one:
+Activate the **native-PyTorch beta** Neuron environment (see prerequisite 2 — this
+must be the beta stack, not the public release):
 
 ```bash
 source /opt/aws_neuronx_venv_pytorch_2_9/bin/activate
 ```
 
-Your prompt should now start with `(aws_neuronx_venv_pytorch_2_9)`.
+(If your beta uses a differently-named venv, activate that one — the key is it's the
+**native-PyTorch beta** environment.)
 
-Check it sees the Trainium chips (you should see a table of NeuronCores):
+Check it sees the Trainium chip (you should see a table with at least one NeuronCore):
 
 ```bash
 neuron-ls
@@ -221,8 +236,8 @@ You don't have to do anything for either — just run the script.
 
 | Symptom | Fix |
 |---|---|
-| `neuron-ls` shows nothing / "No neuron devices" | You're not on a Trainium/Inferentia instance, or the AMI lacks Neuron drivers. Use a Neuron DLAMI on a `trn2`/`trn1`/`inf2` instance. |
-| `ModuleNotFoundError: torch_xla` | You didn't activate the env. Run `source /opt/aws_neuronx_venv_pytorch_2_9/bin/activate`. |
+| `neuron-ls` shows nothing / "No neuron devices" | You're not on a Trainium/Inferentia instance, or the AMI lacks Neuron. Use a `trn2.3xlarge` with the **native-PyTorch Neuron beta**. |
+| `ModuleNotFoundError: torch_xla` | You didn't activate the env. Run `source /opt/aws_neuronx_venv_pytorch_2_9/bin/activate` (the native-PyTorch beta venv). |
 | First run "hangs" for minutes | That's the one-time compile. Wait — it caches and is fast afterward. |
 | `sort is not supported on trn2` | You re-enabled the `splice_junctions` head. Leave it skipped (default), or run it on CPU. |
 | `NCC_ITIN902` / `AffineIV` compiler error | The optlevel flag isn't being applied. Make sure you run via `predict_alphagenome.py` (it sets `NEURON_CC_FLAGS=--optlevel=1`), or set that env var yourself before running. |
