@@ -14,13 +14,15 @@ a `CsmPipeline` that plugs into the `vllm_omni_neuron` plugin alongside
   Registered diffusion model CsmPipeline           -> ...csm_pipeline.CsmPipeline
   ```
   `forward(request) -> DiffusionOutput(output=<24kHz waveform>)`.
-- ⚠️ **In-container execution pending a runtime fix.** The pipeline constructs in the
-  omni beta container, but `forward` hits the container's **older torch_xla** rejecting
-  CSM's int64 casts (RoPE `position_ids.float()`, attention-mask `.to(bool)`):
-  `RuntimeError: Expected self.dtype() == dst.dtype()`. The **identical compute runs
-  end-to-end and produces audio on the native-PyTorch Neuron beta (torch_xla 2.9)** —
-  see `../native-pytorch/` for the validated, audio-producing path. So this is a
-  runtime/version gap, not a pipeline-logic problem.
+- ⚠️ **In-container execution blocked by a torch_xla 2.10 regression.** The pipeline
+  constructs in the omni beta container, but `forward` fails because the container
+  ships **torch_xla 2.10.0** (newer than the validated 2.9.0), which has multiple
+  strictness regressions CSM trips: int64→float `.float()` (`_to_copy`), xla
+  `torch.autocast` (missing `get_amp_supported_dtype`), `torch.cat` contiguity, and
+  even `.contiguous()` on a slice raising `Expected self.is_contiguous()`. Per-line
+  patching is futile once `.contiguous()` itself is broken. The **identical compute
+  runs end-to-end and produces audio on torch_xla 2.9** (the native-PyTorch beta) —
+  see `../native-pytorch/`. So this is a runtime-version gap, not pipeline logic.
 
 ## How it works
 CSM's `generate` can't be lowered to Neuron (int64 dynamic loop), so the pipeline keeps
@@ -29,9 +31,9 @@ backbone + Mimi codec); the tiny depth decoder stays on host. This mirrors
 `Wan22Pipeline`'s host-orchestration + on-device-forward structure.
 
 ## To finish the omni serving path
-1. Match the container's torch_xla to the native-PyTorch beta (torch_xla 2.9), OR
-   patch the two int64 casts (mask `.to(bool)` and RoPE `position_ids.float()`) to be
-   torch_xla-safe on the container's version.
+1. Run on a **torch_xla 2.9 runtime** (an omni beta image built on 2.9, or pin
+   torch/torch_xla to 2.9 in the container after a vllm-omni 0.19 compat check). The
+   container's torch_xla 2.10 has the regressions above; 2.9 is the validated runtime.
 2. Add fixed-shape bucketing for the backbone/depth forwards (the omni engine's
    compiled-graph path) so per-request latency is stable.
 3. Serve: `vllm serve <csm-1b> --omni` and hit `/v1/audio/speech`.
