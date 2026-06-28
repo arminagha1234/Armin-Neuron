@@ -62,7 +62,10 @@ def _offload(module, dev, method="forward"):
 def load_model(model_path: str = MODEL):
     dev = xm.xla_device()
     proc = AutoProcessor.from_pretrained(model_path)
-    model = CsmForConditionalGeneration.from_pretrained(model_path, dtype=torch.float32).eval()
+    # bf16 backbone+depth (validated cosine 0.99997, ~1.4-1.9x), codec fp32 (bf16 breaks
+    # its convs; it's fed int codes so the boundary is dtype-agnostic).
+    model = CsmForConditionalGeneration.from_pretrained(model_path, dtype=torch.bfloat16).eval()
+    model.codec_model = model.codec_model.float()
     _offload(model.backbone_model, dev)             # 16-layer transformer -> Neuron
     _offload(model.codec_model, dev, method="decode")  # Mimi codec -> Neuron
     return proc, model

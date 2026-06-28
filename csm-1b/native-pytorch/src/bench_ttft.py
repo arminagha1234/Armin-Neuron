@@ -66,7 +66,10 @@ def main():
 
     dev = xm.xla_device()
     proc = AutoProcessor.from_pretrained(MODEL)
-    model = CsmForConditionalGeneration.from_pretrained(MODEL, dtype=torch.float32).eval()
+    # Full bf16 — validated clean (cosine 0.999968, argmax 100%, no collapse; CsmRMSNorm
+    # self-upcasts variance to fp32). ~1.4x on the backbone, no dtype boundaries.
+    model = CsmForConditionalGeneration.from_pretrained(MODEL, dtype=torch.bfloat16).eval()
+    model.codec_model = model.codec_model.float()  # codec fp32 (bf16 breaks its convs); fed int codes
     _offload_timed(model.backbone_model, dev, "backbone")
     _offload_timed(model.codec_model, dev, "codec", method="decode")
 
