@@ -34,8 +34,15 @@ CSM-specific depth-loop fix (on-device fused / TKG megakernel / parallel codeboo
 
 ### Tier B — CSM-specific depth-loop attack (the 156ms elephant)
 - **B1. Depth decoder on Neuron + StaticCache** (fix the NRT_EXEC_OOB codebook-index path).
-- **B2. NKI TKG megakernel** (`attention_block_tkg`) on backbone + depth steps — collapse
-  per-op dispatch (the structural floor fix).
+  - **DONE (diagnosis, 2026-06-28, `results/B1_DEPTH_ON_DEVICE.md`):** the OOB index-range
+    hypothesis is FALSE (all 31 gather indices in-bounds on CPU). Per-step forward-wrapper
+    offload is the wrong shape — 31 host↔device round-trips/frame would cost more sync than
+    the 156ms compute saved. **Reframe: fuse the whole 31-step loop into ONE device graph.**
+- **B1' (revised, NEXT). Trace the whole 31-step depth loop as a single device callable**
+  (fixed shapes, on-device cache, one round-trip/frame). Needs the static-index rewrite of
+  `CsmCodebooksHead` (python-int slice instead of `weight[cache_position-1]`).
+- **B2. NKI TKG megakernel** (`attention_block_tkg`) on backbone + the fused depth step —
+  collapse per-op dispatch once B1' gives a single-graph target.
 - **B3. Parallel/speculative codebook decoding** — amortize the 31 serial steps (research).
 
 ### Tier C — squeeze
