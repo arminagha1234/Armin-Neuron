@@ -58,3 +58,35 @@ the interface is now confirmed + mapped, so it's de-risked.
 4. **Depth decoder on Neuron** (fix NRT_EXEC_OOB index path) + TKG-fuse — crush 156ms.
 5. **Multi-core TP=2–4** (`attention_block_tkg_sharding`) — margin for hard <100ms.
 6. **MXFP8** matmul squeeze.
+## Streaming implemented + the offload-path latency ceiling (2026-06-28)
+`src/stream_speech.py` hooks CSM's per-frame `streamer.put(codes)`, decodes each
+frame's 32 codes immediately (1 frame = 1920 samples = exactly 80 ms @ 24 kHz), and
+records true TTFA. **Streaming works** — emits frame 0 and wrote a 1.0 s clip.
+
+**But it exposed the architectural ceiling of the lazy torch_xla offload path:**
+per-frame latency is dominated by **per-step recompiles** — each decode frame grows
+the KV cache → a new tensor shape → neuronx-cc recompiles, and the NEFF cache is not
+stably reused across the dynamic shapes (measure-pass TTFA was ~19 s, all recompile).
+A clamp on codes was needed first (generated frames can contain eos/special ids ≥
+codebook_size → OOB in the RVQ embedding lookup on-device).
+
+### Decisive conclusion
+The **offload approach (CPU generate loop + per-call device offload) is a correctness
+vehicle, not a latency one.** It cannot deliver stable low latency because of
+dynamic-shape recompiles + per-call host syncs. Low latency therefore *requires* the
+fixed-shape compiled-graph path:
+- **Fixed-shape bucketing + AOT trace** (torch_neuronx.trace / the omni engine's
+  compiled path) so the backbone decode step and codec compile ONCE and reuse, OR
+- the **NKI TKG megakernel** (compiles the whole step as one fixed kernel).
+
+This makes Levers 2/3/5 (TKG megakernel, on-device depth, fixed-shape compile) the
+**required** path to <500ms — not optional polish. Streaming (done) + bf16 (done) are
+necessary but insufficient on the lazy-offload runtime; they pay off once the per-step
+graph is fixed-shape and compiled once.
+
+### Net status toward targets
+- ✅ Streaming emit-frame-0 mechanism: working.
+- ✅ bf16 ~1.8× per-frame compute: working.
+- ⛔ Stable low TTFA: blocked by lazy-offload per-step recompiles → needs fixed-shape
+  AOT compile (bucketed) or the TKG megakernel. That is the next build and the gating
+  item for both <500ms and <100ms.
