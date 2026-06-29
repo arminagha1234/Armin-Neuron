@@ -41,9 +41,19 @@ CSM-specific depth-loop fix (on-device fused / TKG megakernel / parallel codeboo
 - **B1' (revised, NEXT). Trace the whole 31-step depth loop as a single device callable**
   (fixed shapes, on-device cache, one round-trip/frame). Needs the static-index rewrite of
   `CsmCodebooksHead` (python-int slice instead of `weight[cache_position-1]`).
+  - **DONE (2026-06-28, `results/B1P_FUSED_DEPTH.md`):** built + validated (32/32 EXACT in
+    fp32). OOB root cause confirmed = dynamic gather with a runtime *device-tensor* offset;
+    fixed with static python-int offsets + `inputs_embeds`. **Speed is a wash in bf16:
+    177.9→166.8ms = 1.07×** (fp32 1.68×). The loop is latency-bound on 31 serial tiny
+    steps, so fusing host round-trips doesn't help in bf16.
 - **B2. NKI TKG megakernel** (`attention_block_tkg`) on backbone + the fused depth step —
-  collapse per-op dispatch once B1' gives a single-graph target.
-- **B3. Parallel/speculative codebook decoding** — amortize the 31 serial steps (research).
+  **DOWNGRADED:** collapses per-op dispatch *within* a step, but the bottleneck is the
+  31-deep serial chain, not dispatch. Expected marginal. Park unless B3 needs it.
+- **B3. Parallel/speculative codebook decoding — PRIMARY depth lever (PROMOTED).** Breaking
+  the serial dependency is the only thing that moves the 156–178ms floor. Directions:
+  (a) multi-codebook-per-step parallel head + cheap verify/correct; (b) codebook-group
+  factorization; (c) distilled single-shot RVQ predictor. Research risk, highest payoff.
+- A3 (TP=2–4 backbone) remains a secondary lever (shaves the 38ms backbone step).
 
 ### Tier C — squeeze
 - **C1. FP8 backbone matmuls** (e4m3, trn2-safe).
