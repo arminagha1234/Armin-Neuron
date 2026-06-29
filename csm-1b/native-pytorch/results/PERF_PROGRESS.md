@@ -90,3 +90,39 @@ graph is fixed-shape and compiled once.
 - ⛔ Stable low TTFA: blocked by lazy-offload per-step recompiles → needs fixed-shape
   AOT compile (bucketed) or the TKG megakernel. That is the next build and the gating
   item for both <500ms and <100ms.
+## Fixed-shape AOT trace attempt — needs a real build (not a quick win)
+Tried `torch_neuronx.trace` on the codec single-frame decode (fixed (1,32,1)) to prove
+the fixed-shape unblock. It **core-dumped** in the XLA tensor bridge — the Mimi codec's
+stray RVQ tensors + dynamic internal quantizer ops don't trace cleanly, and mixing
+`torch_neuronx.trace` with an active `torch_xla` session conflicts.
+
+### Honest boundary
+Two distinct approaches now hit walls for *stable low latency*:
+1. Lazy torch_xla offload → per-step recompiles (latency ceiling).
+2. `torch_neuronx.trace` → core dump on the codec.
+
+⇒ The remaining path to <500ms/<100ms is a **real engineering build**, not a quick
+experiment:
+- **Preferred:** the **vLLM-Omni `CsmPipeline`** on a torch_xla 2.9 runtime — the omni
+  engine provides the bucketed/compiled-graph path (fixed shapes, warm NEFFs) that the
+  lazy offload lacks. (Blocked today only by the container's torch_xla 2.10 regressions;
+  fix = 2.9 runtime.)
+- **Or:** hand-built fixed-shape AOT: trace the backbone single-step at bucketed KV-cache
+  shapes + the codec frame-decode (handling stray tensors / dynamic ops), drive a manual
+  decode loop. Then layer the **NKI TKG megakernel** (`attention_block_tkg`) to collapse
+  per-layer dispatch.
+
+### Session net (CSM TTFT)
+| Lever | State |
+|---|---|
+| Streaming (emit frame 0) | ✅ implemented (stream_speech.py) |
+| bf16 (~1.8x per-frame) | ✅ validated + applied |
+| Stage-0 latency breakdown | ✅ measured (TTFA ~1.16s, overhead-dominated) |
+| NKI TKG megakernel | ✅ available + interface mapped (de-risked) |
+| Fixed-shape AOT / compiled graph | ⛔ the required next build (lazy path + quick trace both blocked) |
+| Multi-core TP | ⛔ via sharding kernel / omni engine (after fixed-shape) |
+
+**Bottom line:** bf16 + streaming are done and necessary; the gating item for the
+targets is the fixed-shape compiled-graph path, best delivered via the vLLM-Omni
+pipeline on torch_xla 2.9 (or a hand-built AOT trace + TKG megakernel). That is a
+multi-hour/-day build, now fully scoped and de-risked.
