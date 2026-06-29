@@ -71,6 +71,12 @@ def load_model(model_path: str = MODEL):
     return proc, model
 
 
+def warmup(proc, model):
+    """Pre-compile the prefill + decode-step graphs so the first real request pays
+    only execution (not the one-time ~minute compile). Call once at startup."""
+    _ = generate(proc, model, "[0]warmup.", max_new_tokens=3)
+
+
 def generate(proc, model, text: str, max_new_tokens: int = 256) -> torch.Tensor:
     inputs = proc(text, add_special_tokens=True, return_tensors="pt")
     with torch.no_grad():
@@ -90,6 +96,8 @@ def main():
 
     print("[csm] loading + offloading to NeuronCore (first call compiles)...")
     proc, model = load_model()
+    print("[csm] warming up (one-time compile)...")
+    warmup(proc, model)
     print(f"[csm] generating: {args.text!r}")
     t0 = time.time()
     wav = generate(proc, model, args.text, args.max_new_tokens)

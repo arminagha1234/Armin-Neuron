@@ -6,11 +6,11 @@ model — on **AWS Trainium2**. CSM turns text into 24 kHz speech (Llama-3.2-1B 
 
 **You do not need to know anything about Trainium or Neuron.** Every command is copy-paste.
 
-> **Status:** ✅ Working on Trainium. The heavy compute (16-layer backbone transformer
-> + Mimi codec) runs on a NeuronCore — validated **cosine 1.000000** vs CPU
-> (teacher-forced, argmax 100%). End-to-end generates speech (`results/*.wav`). Also
-> shipped as a registered `CsmPipeline` in the vLLM-Omni Neuron plugin (see
-> [vLLM-Omni](#vllm-omni-csmpipeline)).
+> **Status:** ✅ Working on Trainium. Heavy compute (16-layer backbone + Mimi codec)
+> on a NeuronCore, validated **cosine 1.000000** vs CPU. **Streaming TTFA (time to
+> first audio) = 241 ms warm — under the 500 ms target** (bf16 + streaming +
+> StaticCache; see `results/PERF_PROGRESS.md`). Also shipped as a registered
+> `CsmPipeline` in the vLLM-Omni Neuron plugin (see [vLLM-Omni](#vllm-omni-csmpipeline)).
 
 ---
 
@@ -90,9 +90,13 @@ logit match (cosine 1.0, argmax 100%)** and **Mimi decode cosine 1.0** — see
 `results/RESULTS.md`.
 
 ## vLLM-Omni CsmPipeline
-The vLLM-Omni serving path (a `CsmPipeline` registered in the `vllm_omni_neuron`
-plugin) lives in **[../vllm-omni/](../vllm-omni/)**. It wraps the same offload logic
-shown here behind the omni pipeline interface for `/v1/audio/speech` serving.
+A `CsmPipeline` (`src/csm_pipeline.py`) is implemented for the **vLLM-Omni Neuron
+plugin** (`vllm_omni_neuron`), registered alongside `Wan22Pipeline`/`HelloWorldPipeline`
+(`model_arch: CsmForConditionalGeneration`). It wraps the same offload logic behind the
+omni pipeline interface (`forward(request) -> DiffusionOutput(output=<waveform>)`) for
+serving via the omni `/v1/audio/speech` path. It registers and constructs in the omni
+beta container; full in-container execution needs the native-PyTorch-beta torch_xla
+(the container's bundled torch_xla has the int64-cast quirk noted above).
 
 ## Troubleshooting
 | Symptom | Fix |
@@ -104,10 +108,9 @@ shown here behind the omni pipeline interface for `/v1/audio/speech` serving.
 
 ## Files (src/)
 - `generate_speech.py` — the one-command TTS tool (the deliverable).
+- `csm_pipeline.py` — the vLLM-Omni `CsmPipeline` (Path A serving artifact).
 - `run_csm_offload.py` — the offload run + CPU-compare harness.
 - `run_csm_cpu.py` — CPU reference (oracle).
-
-(The vLLM-Omni `CsmPipeline` lives in [../vllm-omni/src/csm_pipeline.py](../vllm-omni/src/csm_pipeline.py).)
 
 ## Credits & license
 - Model: `eustlb/csm-1b` (canonical HF conversion). Original: Sesame CSM
