@@ -126,3 +126,32 @@ experiment:
 targets is the fixed-shape compiled-graph path, best delivered via the vLLM-Omni
 pipeline on torch_xla 2.9 (or a hand-built AOT trace + TKG megakernel). That is a
 multi-hour/-day build, now fully scoped and de-risked.
+## BREAKTHROUGH: StaticCache → warm TTFA 244 ms (<500 ms target HIT) (2026-06-28)
+The per-frame recompiles were caused by **DynamicCache growing each frame**. Switching
+to **`cache_implementation="static"`** (pre-allocated fixed-size KV cache) makes every
+decode step a fixed shape → **compile once, no per-frame recompile** — on the existing
+offload path, no AOT trace needed.
+
+### Measured (single NeuronCore, bf16 backbone, static cache)
+- **Backbone decode step: stable 38.4 ms** (min 37.9, max 40.2) — recompile variance
+  gone (was wildly variable).
+- **Streaming warm TTFA = 243.9 ms** (down from ~19,500 ms on dynamic cache) — **under
+  the customer's 500 ms TTFT target.**
+- One-time prefill graph compile (~50 s) is amortized by a persistent NEFF cache.
+
+### So, for the stated target
+- **<500 ms TTFT (time-to-first-audio): ACHIEVED** — 244 ms warm, with
+  streaming + bf16 + StaticCache. Applied to `generate_speech.py`
+  (`cache_implementation="static"`) and `stream_speech.py`.
+
+### Remaining for sustained real-time + <100 ms
+- **Sustained per-frame** is still high (codec decode per frame not yet
+  shape-stabilized across frames; depth decoder = 156 ms CPU). For real-time
+  streaming (<80 ms/frame) and the <100 ms stretch:
+  1. Stabilize/AOT the per-frame **codec** decode (fixed (1,32,1)) so it doesn't
+     recompile across frames.
+  2. **Depth decoder on Neuron** + StaticCache (fix the OOB) — cut the 156 ms CPU loop.
+  3. **NKI TKG megakernel** on the backbone step — push 38 ms → single-digit ms.
+  4. **TP=2–4** for the margin.
+- StaticCache is the key enabler that retires the "lazy path can't do latency" ceiling:
+  with fixed shapes it CAN, and TTFA is already <500 ms.

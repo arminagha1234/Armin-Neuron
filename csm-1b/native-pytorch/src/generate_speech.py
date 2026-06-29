@@ -75,7 +75,8 @@ def generate(proc, model, text: str, max_new_tokens: int = 256) -> torch.Tensor:
     inputs = proc(text, add_special_tokens=True, return_tensors="pt")
     with torch.no_grad():
         audio = model.generate(**inputs, output_audio=True, do_sample=False,
-                               max_new_tokens=max_new_tokens)
+                               max_new_tokens=max_new_tokens,
+                               cache_implementation="static")  # fixed-shape KV: no per-frame recompiles
     a = audio[0] if isinstance(audio, (list, tuple)) else audio
     return a.detach().float().cpu().flatten()
 

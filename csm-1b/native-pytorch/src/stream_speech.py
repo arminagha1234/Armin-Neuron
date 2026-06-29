@@ -89,7 +89,8 @@ def main():
     eos_id = model.config.codebook_eos_token_id
 
     inputs = proc(TEXT, add_special_tokens=True, return_tensors="pt")
-    gkw = dict(output_audio=False, do_sample=False, max_new_tokens=args.frames)
+    gkw = dict(output_audio=False, do_sample=False, max_new_tokens=args.frames,
+               cache_implementation="static")   # fixed-shape KV cache -> no per-frame recompiles
 
     def run(label):
         st = AudioFrameStreamer(model, eos_id)
