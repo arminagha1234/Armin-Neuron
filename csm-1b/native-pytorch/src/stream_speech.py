@@ -50,6 +50,7 @@ class AudioFrameStreamer:
         self.ttfa = None
         self.frames = []
         self.n = 0
+        self._last = None
 
     def put(self, value):
         # value: codes for one frame, shape [B, num_codebooks] (or [num_codebooks])
@@ -58,6 +59,7 @@ class AudioFrameStreamer:
             codes = codes[None, :]
         if (codes[0, :-1] == self.eos_id).all():   # eos frame
             return
+        tput = time.perf_counter()
         # codes may contain ids >= codebook_size (eos/specials) -> clamp to avoid
         # OOB in the RVQ embedding lookup on-device.
         c = codes.to(torch.long).clamp_(0, 2047).reshape(1, codes.shape[-1], 1)
@@ -65,10 +67,16 @@ class AudioFrameStreamer:
             a = self.model.codec_model.decode(c)
         a = a[0] if isinstance(a, (list, tuple)) else getattr(a, "audio_values", a)
         a = a.detach().float().cpu().flatten()
+        t_codec = (time.perf_counter() - tput) * 1000.0
+        now = time.perf_counter()
+        gap = (now - self._last) * 1000.0 if self._last else 0.0   # backbone+depth for this frame
+        self._last = now
         self.frames.append(a)
         self.n += 1
         if self.ttfa is None:
             self.ttfa = (time.perf_counter() - self.t0) * 1000.0
+        if self.n <= 6:
+            print(f"    frame {self.n}: codec={t_codec:.1f}ms  step(bb+depth+gap)={gap:.1f}ms")
 
     def end(self):
         pass

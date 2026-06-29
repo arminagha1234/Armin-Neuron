@@ -144,14 +144,30 @@ offload path, no AOT trace needed.
   streaming + bf16 + StaticCache. Applied to `generate_speech.py`
   (`cache_implementation="static"`) and `stream_speech.py`.
 
-### Remaining for sustained real-time + <100 ms
-- **Sustained per-frame** is still high (codec decode per frame not yet
-  shape-stabilized across frames; depth decoder = 156 ms CPU). For real-time
-  streaming (<80 ms/frame) and the <100 ms stretch:
-  1. Stabilize/AOT the per-frame **codec** decode (fixed (1,32,1)) so it doesn't
-     recompile across frames.
-  2. **Depth decoder on Neuron** + StaticCache (fix the OOB) — cut the 156 ms CPU loop.
-  3. **NKI TKG megakernel** on the backbone step — push 38 ms → single-digit ms.
-  4. **TP=2–4** for the margin.
-- StaticCache is the key enabler that retires the "lazy path can't do latency" ceiling:
-  with fixed shapes it CAN, and TTFA is already <500 ms.
+### Steady-state per-frame breakdown (warm, static cache, bf16)
+After a one-time decode-graph compile (~58 s on frame 2, amortized by warm NEFF cache
++ a server warm-up), the per-frame rate stabilizes:
+
+| component | time |
+|---|---|
+| backbone step (Neuron) | 38 ms |
+| **depth decoder (31 steps, CPU)** | **~156 ms** ← now the #1 per-frame cost |
+| codec decode (Neuron) | 39 ms |
+| host overhead | ~60 ms |
+| **steady per-frame** | **~295 ms** |
+| **TTFA (first audio)** | **241 ms** ✅ |
+
+- **TTFT <500 ms: DONE (241 ms).**
+- **Real-time streaming needs <80 ms/frame**; steady is ~295 ms → not real-time yet.
+  The lever is the **depth decoder (156 ms)**: move it on-Neuron + StaticCache (fix the
+  NRT_EXEC_OOB codebook-index path) → ~31 fast compiled steps; plus TKG megakernel on
+  the backbone (38→single-digit) and TP=2–4. That path targets <80 ms/frame and the
+  <100 ms TTFA stretch.
+- **Add a server warm-up** (one dummy generate at startup) so the ~58 s decode-graph
+  compile never hits a real request.
+
+## Remaining for real-time / <100ms
+1. Depth decoder on Neuron + StaticCache (the 156 ms elephant) — biggest remaining lever.
+2. NKI TKG megakernel on backbone step (38 ms → single-digit).
+3. TP=2–4 (sharding kernel) for the margin.
+4. Warm-up at startup + persistent NEFF cache.
