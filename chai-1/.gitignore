@@ -1,0 +1,2 @@
+# Large captured fixtures / model artifacts — regenerate with capture_all.py
+*.pt
