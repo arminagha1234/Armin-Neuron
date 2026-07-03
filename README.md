@@ -81,6 +81,7 @@ gray field to a real image. → [`flux2-klein-4b/`](flux2-klein-4b/)
 | Gemma4-31B / e4b | LLM | [`gemma4-31b/`](gemma4-31b/) · [`gemma4-e4b/`](gemma4-e4b/) |
 | ModernBERT+ | Encoder | [`Modernbert+/`](Modernbert+/) |
 | BERT embeddings | Encoder | [`bert-embeddings-trainium/`](bert-embeddings-trainium/) |
+| ESM-2 | Protein LM (encoder) | [`esm2/`](esm2/) |
 | NKI kernels | Hand-written Trainium kernels | [`nki-kernels/`](nki-kernels/) |
 
 *(Folders evolve — browse the repo for the current full list.)*
