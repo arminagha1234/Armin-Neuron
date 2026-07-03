@@ -1,0 +1,4 @@
+transformers>=4.40,<5
+sentencepiece
+pillow
+numpy
