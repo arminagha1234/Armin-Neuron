@@ -1,0 +1,5 @@
+# multimolecule's RiNALMo re-implementation imports `transformers.initialization`,
+# which only exists in transformers >= 5.x. The other models in this repo were
+# validated on transformers 4.57; RiNALMo needs 5.x.
+transformers>=5.0
+multimolecule

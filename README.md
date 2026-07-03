@@ -85,6 +85,7 @@ gray field to a real image. → [`flux2-klein-4b/`](flux2-klein-4b/)
 | SigLIP / SigLIP2 | Vision-language (ViT) | [`siglip/`](siglip/) |
 | CLIP | Vision-language (ViT) | [`clip/`](clip/) |
 | Bacformer | Bacterial-genome model (2-stage) | [`bacformer/`](bacformer/) |
+| RiNALMo | RNA LM (encoder, 650M) | [`rinalmo/`](rinalmo/) |
 | NKI kernels | Hand-written Trainium kernels | [`nki-kernels/`](nki-kernels/) |
 
 *(Folders evolve — browse the repo for the current full list.)*
