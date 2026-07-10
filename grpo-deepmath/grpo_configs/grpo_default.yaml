@@ -1,0 +1,28 @@
+# Output
+output_dir: output
+
+# Training arguments
+max_steps: -1
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 1
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+learning_rate: 5e-7
+lr_scheduler_type: linear
+# lr_scheduler_kwargs:
+#   min_lr: 5.0e-7
+warmup_ratio: 0.0
+
+# GRPO specific parameters
+beta: 0.001
+max_completion_length: 1024
+num_generations: 8
+
+# Logging arguments
+logging_strategy: steps
+logging_steps: 10
+report_to: ["tensorboard"]
+save_strategy: "steps"
+save_steps: 10000
+seed: 42
