@@ -1,0 +1,7 @@
+# Generated data / model outputs — don't commit
+data/*.parquet
+data/*.arrow
+data/openthoughts3_*.jsonl
+data/out_*.jsonl
+# keep the tiny smoke fixture
+!data/prompts_smoke.jsonl
