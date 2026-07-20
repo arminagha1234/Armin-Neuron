@@ -1,5 +1,13 @@
+# Benchmark run outputs (regenerated on every run)
 results_*/
+
+# Python bytecode / caches
 *.pyc
 __pycache__/
+
+# Logs
 *.log
 serve_*.log
+
+# Keep the serving package tracked — it's the Gemma4 support code, not a build artifact.
+!serving_pkg/
