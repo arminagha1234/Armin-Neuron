@@ -2,7 +2,7 @@
 # Launch a Gemma4-31B vLLM-Neuron server for one input-size config, then wait until it is ready.
 # Called by run_benchmark.sh (once per input size), or run standalone. Configure via env vars.
 #
-#   LEN=5120 SEG=4096 BUCKETS=512,1024,2048,4096 bash launch_serve.sh
+#   LEN=5120 SEG=4096 BUCKETS=4096 bash launch_serve.sh
 #
 # All settings have defaults; override any via env var (see run_benchmark.sh for per-size values).
 set -u
@@ -13,7 +13,7 @@ SERVED_NAME=${SERVED_NAME:-gemma4}
 TP=${TP:-32}                                   # tensor-parallel size
 LEN=${LEN:-5120}                               # --max-model-len (caps input+output)
 SEG=${SEG:-4096}                               # --max-num-batched-tokens (chunked-prefill segment)
-BUCKETS=${BUCKETS:-512,1024,2048,4096}         # num_batched_tokens_buckets (last must == SEG)
+BUCKETS=${BUCKETS:-4096}                       # num_batched_tokens_buckets — with segmented prefill this MUST equal SEG (single bucket)
 MNS=${MNS:-32}                                 # --max-num-seqs (>= max concurrency you will test)
 KV_CACHE_DTYPE=${KV_CACHE_DTYPE:-auto}         # 'auto' = bf16 (default). Set 'fp8_e4m3' for fp8 KV cache.
 PORT=${PORT:-8000}

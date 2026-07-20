@@ -51,7 +51,7 @@ run_one () {
     --ctx-tokens "$ctx" --gen "$GEN" --levels "$LEVELS" --out "$OUT/$name.json" 2>&1 | tee "$OUT/$name.log"
 }
 
-run_one 4k   5120   4096   4096  512,1024,2048,4096
+run_one 4k   5120   4096   4096  4096
 run_one 16k  20480  16384  4096  4096
 run_one 32k  36864  32768  4096  4096
 run_one 64k  69632  65536  4096  4096
