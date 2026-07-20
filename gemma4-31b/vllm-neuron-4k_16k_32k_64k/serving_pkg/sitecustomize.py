@@ -1,36 +1,51 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Auto-loaded by Python (when on PYTHONPATH) so `vllm serve` registers Gemma4.
+"""Auto-loaded by Python (when this dir is on PYTHONPATH) so that ``vllm serve``
+recognizes Gemma4 AND has the patched segmented-attention kernel long context
+needs -- with no vLLM fork and no manual steps.
 
-`vllm serve` is its own entrypoint — we can't pass it an import flag. Python
-imports `sitecustomize` automatically at startup if it's importable, so dropping
-this on PYTHONPATH makes the registration run inside the vllm server process
-(and every worker subprocess) without forking vLLM.
+``vllm serve`` is its own entrypoint, so we can't pass it an import flag. Python
+imports ``sitecustomize`` automatically at interpreter startup if it is
+importable, so putting this directory on PYTHONPATH runs the steps below inside
+the server process (and every worker subprocess).
+
+Order matters:
+  1. Deploy the patched ``vllm_neuron`` ``attention_segmented_cte.py`` (edit A +
+     SWA windowed gather) over the installed copy. Runs FIRST -- before vLLM
+     imports vllm_neuron -- so the patched module is the one that gets loaded.
+  2. Install the transformers gemma4 config stub (so AutoConfig recognizes
+     model_type ``gemma4`` before vLLM calls it).
+  3. Register ``Gemma4ForConditionalGeneration`` into vLLM's model registry.
+
+Every step is wrapped so a failure logs a warning but never blocks startup.
 """
 import logging
 
-import os
+_log = logging.getLogger(__name__)
 
-# Teach transformers about the gemma4 config types BEFORE vLLM calls AutoConfig.
+# 1. Deploy patched segmented CTE BEFORE anything imports vllm_neuron.
+try:
+    import deploy_segmented_cte
+
+    deploy_segmented_cte.deploy()
+except Exception as exc:  # never block startup
+    _log.warning("[sitecustomize] segmented CTE deploy skipped: %r", exc)
+
+# 2. Teach transformers about the gemma4 config types before vLLM calls AutoConfig.
 try:
     import gemma4_transformers_stub
-    gemma4_transformers_stub.install()
-    logging.getLogger(__name__).info("[sitecustomize] gemma4 transformers stub installed")
-except Exception as exc:
-    logging.getLogger(__name__).warning("[sitecustomize] gemma4 stub skipped: %r", exc)
 
+    gemma4_transformers_stub.install()
+    _log.info("[sitecustomize] gemma4 transformers stub installed")
+except Exception as exc:
+    _log.warning("[sitecustomize] gemma4 stub skipped: %r", exc)
+
+# 3. Register the model (+ post-plugin re-register hook, since the vllm_neuron
+#    plugin resets the registry after it loads).
 try:
     import gemma4_register
+
     gemma4_register.install_post_plugin_hook()
     gemma4_register.register()
-    logging.getLogger(__name__).info("[sitecustomize] Gemma4 registered")
-except Exception as exc:  # never block startup on this
-    logging.getLogger(__name__).warning("[sitecustomize] Gemma4 register skipped: %r", exc)
-
-# Path B: apply the (gated) TTFT optimization patches when GEMMA4_APPLY_PATHB=1.
-if os.environ.get("GEMMA4_APPLY_PATHB") == "1":
-    try:
-        import patch_pathB
-        patch_pathB.apply_pathB_patches()
-        logging.getLogger(__name__).info("[sitecustomize] Path B patches applied")
-    except Exception as exc:
-        logging.getLogger(__name__).warning("[sitecustomize] Path B patch skipped: %r", exc)
+    _log.info("[sitecustomize] Gemma4 registered")
+except Exception as exc:
+    _log.warning("[sitecustomize] Gemma4 register skipped: %r", exc)

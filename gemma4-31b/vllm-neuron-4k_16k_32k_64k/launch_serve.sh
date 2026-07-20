@@ -28,9 +28,22 @@ pkill -9 -f "multiproc_executor" 2>/dev/null || true
 sleep 6
 
 if [ -n "$SERVING_PKG" ]; then
-  export PYTHONPATH="$SERVING_PKG:${PYTHONPATH:-}"   # sitecustomize.py here auto-registers Gemma4
+  export PYTHONPATH="$SERVING_PKG:${PYTHONPATH:-}"   # sitecustomize.py here registers Gemma4 + deploys the segmented kernel
   echo "[launch] SERVING_PKG on PYTHONPATH: $SERVING_PKG"
+  # Deploy the patched segmented-attention kernel over the container's vllm_neuron
+  # copy (edit A + SWA windowed gather). Required for Gemma4 chunked prefill
+  # (head_dim 256/512). Idempotent + backs up the original. sitecustomize also
+  # does this defensively; running it here makes it visible in the launch log.
+  if [ -f "$SERVING_PKG/deploy_segmented_cte.py" ]; then
+    python3 "$SERVING_PKG/deploy_segmented_cte.py" \
+      || echo "[launch] WARN: segmented CTE deploy failed — long-context prefill may not work"
+  fi
 fi
+# Long-context (32K/64K) compile + execute can exceed vLLM's default timeouts.
+export NEURON_SKIP_EFA_AFFINITY=${NEURON_SKIP_EFA_AFFINITY:-1}
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-2400}
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=${VLLM_ENGINE_ITERATION_TIMEOUT_S:-2400}
+export VLLM_RPC_TIMEOUT=${VLLM_RPC_TIMEOUT:-2400000}
 export NEURON_RT_DBG_INTRA_RDH_CHANNEL_BUFFER_SIZE=$(( LEN * 5376 * 2 ))
 ADD="{\"neuron_config\":{\"num_batched_tokens_buckets\":[${BUCKETS}],\"num_seqs_buckets\":[${MNS}],\"on_device_sampling_config\":{\"all_greedy\":true}}}"
 KVDT_ARG=""
