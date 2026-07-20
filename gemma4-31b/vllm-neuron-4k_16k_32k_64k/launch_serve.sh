@@ -6,8 +6,9 @@
 #
 # All settings have defaults; override any via env var (see run_benchmark.sh for per-size values).
 set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
-MODEL=${MODEL:-/root/models/gemma-4-31b-it}   # local path or HF id of the Gemma4-31B checkpoint
+MODEL=${MODEL:-google/gemma-4-31B-it}          # HF id (or local path) of the Gemma4-31B checkpoint
 SERVED_NAME=${SERVED_NAME:-gemma4}
 TP=${TP:-32}                                   # tensor-parallel size
 LEN=${LEN:-5120}                               # --max-model-len (caps input+output)
@@ -16,7 +17,7 @@ BUCKETS=${BUCKETS:-512,1024,2048,4096}         # num_batched_tokens_buckets (las
 MNS=${MNS:-32}                                 # --max-num-seqs (>= max concurrency you will test)
 KV_CACHE_DTYPE=${KV_CACHE_DTYPE:-auto}         # 'auto' = bf16 (default). Set 'fp8_e4m3' for fp8 KV cache.
 PORT=${PORT:-8000}
-SERVING_PKG=${SERVING_PKG:-}                   # optional: PYTHONPATH to a custom vLLM-Neuron build
+SERVING_PKG=${SERVING_PKG:-$HERE/serving_pkg}  # Gemma4 registration package (bundled here); on PYTHONPATH so `vllm serve` recognizes Gemma4
 LOGDIR=${LOGDIR:-.}
 LOG="$LOGDIR/serve_len${LEN}_tp${TP}.log"
 
@@ -26,7 +27,10 @@ pkill -9 -f "EngineCore" 2>/dev/null || true
 pkill -9 -f "multiproc_executor" 2>/dev/null || true
 sleep 6
 
-[ -n "$SERVING_PKG" ] && export PYTHONPATH="$SERVING_PKG"
+if [ -n "$SERVING_PKG" ]; then
+  export PYTHONPATH="$SERVING_PKG:${PYTHONPATH:-}"   # sitecustomize.py here auto-registers Gemma4
+  echo "[launch] SERVING_PKG on PYTHONPATH: $SERVING_PKG"
+fi
 export NEURON_RT_DBG_INTRA_RDH_CHANNEL_BUFFER_SIZE=$(( LEN * 5376 * 2 ))
 ADD="{\"neuron_config\":{\"num_batched_tokens_buckets\":[${BUCKETS}],\"num_seqs_buckets\":[${MNS}],\"on_device_sampling_config\":{\"all_greedy\":true}}}"
 KVDT_ARG=""

@@ -20,7 +20,7 @@ LEVELS=${LEVELS:-1,2,4,8,16,32}             # concurrency levels
 TP=${TP:-32}                                # tensor-parallel size
 MNS=${MNS:-32}                              # max-num-seqs (>= max concurrency)
 KV_CACHE_DTYPE=${KV_CACHE_DTYPE:-auto}      # 'auto' = bf16; 'fp8_e4m3' for fp8 KV cache
-MODEL=${MODEL:-/root/models/gemma-4-31b-it} # Gemma4-31B checkpoint (path or HF id)
+MODEL=${MODEL:-google/gemma-4-31B-it}       # Gemma4-31B checkpoint (HF id or local path)
 SERVING_PKG=${SERVING_PKG:-}                # optional custom vLLM-Neuron PYTHONPATH
 BASE_URL=${BASE_URL:-http://localhost:8000}
 MODEL_NAME=${MODEL_NAME:-gemma4}
