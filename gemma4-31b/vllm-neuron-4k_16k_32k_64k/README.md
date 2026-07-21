@@ -12,6 +12,17 @@ Gemma4-31B is not in the base vLLM-Neuron Beta — support is added by the bundl
 
 ---
 
+## Just want to run it? → [LAUNCH.md](./LAUNCH.md)
+
+**[LAUNCH.md](./LAUNCH.md) is the complete copy-paste runbook** — from a bare trn2.48xlarge all the
+way to TTFT/TPOT/E2E numbers. Every command is labeled **[LAPTOP] / [INSTANCE] / [CONTAINER]** so
+there's no guessing where to run it: pull the beta image, install the driver, get the weights, start
+the container, then `git clone` this repo and run. Start there.
+
+The sections below are the reference detail (what it measures, the config, the files).
+
+---
+
 ## Reproduce in 3 steps
 
 ### Step 1 — set up the environment (one time)
@@ -125,7 +136,8 @@ pattern. Full TTFT / TPOT / E2E / throughput tables (and the baseline config) ar
 | 32 | 6.432 | 8.343 | 21.694 | 51.624 |
 
 ## Files
-- `SETUP.md`          — Step 1: beta container setup
+- `LAUNCH.md`         — **complete copy-paste runbook** (bare instance → results), [LAPTOP]/[INSTANCE]/[CONTAINER] labeled
+- `SETUP.md`          — Step 1: beta container setup (reference detail)
 - `RESULTS.md`        — measured TTFT / TPOT / E2E / throughput tables (optimized + baseline)
 - `run_benchmark.sh`  — main entry (all input sizes + summary)
 - `launch_serve.sh`   — launches a Gemma4-31B server for one config (loads `serving_pkg/`)
