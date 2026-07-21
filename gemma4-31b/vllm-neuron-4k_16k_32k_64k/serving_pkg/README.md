@@ -1,82 +1,75 @@
-# serving_pkg — Gemma4-31B support for vLLM-Neuron
+# serving_pkg — Gemma4-31B on vLLM-Neuron
 
-The vLLM-Neuron **Beta** (SDK 2.30) officially serves only Llama3 and GPT-OSS. This package adds
-**Gemma4-31B** (`Gemma4ForConditionalGeneration`) support **without forking vLLM** — you just put this
-directory on `PYTHONPATH` and `vllm serve google/gemma-4-31B-it` works. `launch_serve.sh` does that for
-you automatically (it points `PYTHONPATH` at this folder), so there are no manual steps.
+This package is what makes `vllm serve` recognize and correctly run
+**Gemma4-31B** on the vLLM-Neuron beta. The base beta (SDK 2.30) officially
+supports only Llama3 + GPT-OSS; Gemma4 comes entirely from the files here.
 
-## How registration works (no vLLM fork)
+You do not import anything by hand. `launch_serve.sh` puts this directory on
+`PYTHONPATH`, and Python auto-imports `sitecustomize.py` at interpreter startup
+inside the `vllm serve` process (and every worker). That one hook wires up
+everything below.
 
-`vllm serve` is its own entrypoint — you can't pass it an "import this module first" flag. Python,
-however, **auto-imports a module named `sitecustomize`** at interpreter startup if it's importable. So
-dropping `sitecustomize.py` on `PYTHONPATH` makes our registration run inside the vLLM server process
-**and every worker subprocess**, with zero changes to vLLM itself.
+## What it does (3 things, in order)
 
-At startup, `sitecustomize.py` runs three steps:
+1. **Deploys the patched segmented-attention kernel.**
+   `deploy_segmented_cte.py` copies the bundled `attention_segmented_cte.py`
+   over the container's installed
+   `vllm_neuron/functional/attention/attention_segmented_cte.py`. This is
+   required (a `PYTHONPATH` shadow is not enough — `vllm_neuron` imports the
+   module by its installed path). The patched copy adds:
+   - **edit A** — routes `head_dim > 128` (Gemma4 is 256 for sliding-window
+     layers, 512 for global layers) to a trace-safe torch fallback instead of
+     raising. This is what enables **chunked / segmented prefill above 16K**.
+   - **SWA windowed gather** — for the 49/60 sliding-window layers, gathers a
+     static number of KV blocks at a dynamic offset instead of the full padded
+     span. Pure PyTorch, and the source of the ~1.9× TTFT improvement.
 
-1. **Teach `transformers` about Gemma4** — `gemma4_transformers_stub.install()` registers the
-   `gemma4` / `gemma4_text` config types with `AutoConfig`. vLLM calls `AutoConfig.from_pretrained(...)`
-   **before** it ever reaches our model, and stock `transformers` doesn't know `model_type: gemma4`, so
-   this must happen first. (It's a config stub only — the actual model is built from our `gemma4/`
-   package.)
+   The deploy is **idempotent** and backs the original up once to
+   `attention_segmented_cte.py.bak_armin` before overwriting.
 
-2. **Register the model** — `gemma4_register.register()` force-inserts
-   `Gemma4ForConditionalGeneration` (→ `gemma4.factory.Gemma4ForConditionalGeneration`) into both
-   `vllm.model_executor.models.registry.ModelRegistry` and the `vllm_neuron` registry, marked as a
-   text-generation model. `install_post_plugin_hook()` wraps vLLM's plugin loader so registration is
-   **re-applied after** the `vllm_neuron` plugin loads (the plugin otherwise resets the registry).
+2. **Installs the transformers gemma4 config stub** (`gemma4_transformers_stub`)
+   so `AutoConfig` recognizes `model_type: gemma4` — needed *before* vLLM calls
+   `AutoConfig` on the checkpoint (public transformers 4.x has no gemma4 yet).
 
-3. **(Optional) Path B patches** — if `GEMMA4_APPLY_PATHB=1`, `patch_pathB.apply_pathB_patches()`
-   monkey-patches TTFT-optimization hooks onto the loaded model. These are gated behind sub-flags and
-   **default OFF** (see below). None of them block startup — every step is wrapped in try/except.
+3. **Registers the model** (`gemma4_register`) — force-registers
+   `Gemma4ForConditionalGeneration` into vLLM's `ModelRegistry` and the
+   `vllm_neuron` registry, with a post-plugin re-register hook (the vllm_neuron
+   plugin resets the registry when it loads).
 
-## Contents
+## Files
 
-```
-serving_pkg/
-├── sitecustomize.py             # auto-imported entrypoint; runs the 3 steps above
-├── gemma4_transformers_stub.py  # AutoConfig stub for model_type gemma4 / gemma4_text
-├── gemma4_register.py           # registers Gemma4ForConditionalGeneration into vLLM + vllm_neuron
-├── patch_pathB.py               # optional TTFT-optimization patches (gated, default off)
-└── gemma4/                      # the Gemma4-31B model implementation
-    ├── __init__.py
-    ├── config.py                # Gemma4Config.from_configs(hf_config, ...)
-    ├── factory.py               # Gemma4ForConditionalGeneration entry class
-    ├── model.py                 # the BF16 text decoder (60 layers, SWA + global attention)
-    ├── flash_attn_hd256_nki.py  # split-K attention reference for head_dim=256
-    ├── fused_embed_scale.py     # embedding * sqrt(hidden_size)
-    ├── fused_geglu.py           # GeGLU (gelu_pytorch_tanh) MLP
-    ├── fused_logit_softcap.py   # final logit softcap (tanh(logits/30)*30)
-    ├── fused_norm_residual.py   # RMSNorm + residual
-    ├── fused_qk_norm_rope.py    # QK-norm + RoPE
-    └── optimized_forward.py     # optimized forward hooks
-```
+| file | what it is |
+|---|---|
+| `sitecustomize.py` | auto-import entrypoint — runs the 3 steps above |
+| `deploy_segmented_cte.py` | copies the patched segmented kernel over the installed vllm_neuron copy (idempotent, backs up original) |
+| `attention_segmented_cte.py` | the patched segmented wrapper (edit A + SWA windowed gather) — source for the deploy above |
+| `gemma4_register.py` | force-registers `Gemma4ForConditionalGeneration` into vLLM |
+| `gemma4_transformers_stub.py` | teaches transformers `AutoConfig` about `model_type: gemma4` |
+| `gemma4_flash_prefill_v2.py` | V2 d-tiled flash-prefill NKI kernel (head_dim 256/512). Only used on the **non-chunked** prefill path; see note below |
+| `gemma4/` | the model package — `model.py` (heterogeneous SWA/global attention, QK/V norm, GeGLU, logit softcap, tied embeds), `attention_decode_kernel.py`, `config.py`, `factory.py`, `__init__.py` |
 
-## Environment flags
+## Env flags
 
-| Flag | Default | Effect |
+| var | default | effect |
 |---|---|---|
-| `GEMMA4_APPLY_PATHB` | unset | `1` = apply Path B TTFT-optimization patches (below); else stock model |
-| `GEMMA4_PB_FLASH` | `0` | (Path B) route SWA head_dim=256 prefill attention through the split-K path |
-| `GEMMA4_PB_SOFTCAP` | `0` | (Path B) fused lm-head + logit softcap |
+| `GEMMA4_V2_PREFILL` | `1` (on) | use the V2 flash-prefill NKI kernel on the non-chunked prefill path. Falls back to torch SDPA if the kernel can't load. |
 
-**Honesty note:** the Path B fused-kernel hooks are currently conservative pass-throughs/placeholders
-kept OFF by default — the validated, correctness-first stock model is what serves unless you explicitly
-opt in and re-measure. Turn a `GEMMA4_PB_*` flag on, benchmark, and keep only measured wins.
+> **Note on V2 prefill vs. the benchmark.** The benchmark in this folder runs
+> **chunked** prefill for every input size (`--max-num-batched-tokens` = 4096 <
+> `--max-model-len`), so attention always goes through the segmented path in
+> step 1 above — the V2 kernel's non-chunked branch is not on that hot path.
+> The kernel is bundled for completeness and for single-shot (`SEG >= LEN`,
+> ≤16K) serving, where it lowers TTFT further. The validated long-context
+> numbers come from the segmented path (edit A + SWA windowed gather), not V2.
 
-## Manual use (if not using launch_serve.sh)
+## Validated
 
-```bash
-export PYTHONPATH=/path/to/serving_pkg:$PYTHONPATH
-vllm serve google/gemma-4-31B-it --served-model-name gemma4 --tensor-parallel-size 32 ...
-```
+This is the package that served Gemma4-31B at up to **32K input + 500 output**
+on a trn2.48xlarge (TP=32, beta v5 / SDK 2.30), fresh compile: flat TTFT
+(~0.83 s @ 4K → ~0.92 s @ 32K) and 7/7 correctness including needle-in-haystack
+retrieval across ~27K tokens of context.
 
-Verify registration standalone: `python -m gemma4_register` (prints the registered architectures and
-asserts `Gemma4ForConditionalGeneration` is present).
-
-## Model architecture (summary)
-
-Gemma4-31B BF16 text decoder: 60 layers, hidden 5376, 32 Q heads, vocab 262144, GeGLU MLP, tied
-embeddings, final logit softcap 30.0. Heterogeneous layers — mostly **SWA** (head_dim 256, 16 KV heads,
-sliding window 1024, full RoPE) with **global** layers (head_dim 512, 4 KV heads, full context, partial
-RoPE 0.25) at every 5th index. QK-norm (learnable) + V-norm (no scale); attention `scaling = 1.0`.
+The patched `attention_segmented_cte.py` is validated against the vLLM-Neuron
+**private beta v5 (SDK 2.30, vLLM 0.19.0)** image. On a different vLLM-Neuron
+build the file may not match; if the deploy step warns or the server fails to
+start, that version mismatch is the first thing to check.

@@ -69,48 +69,64 @@ All settings are environment variables (defaults shown). Override any inline, e.
 | `ONLY` | `4k,16k,32k,64k` | which input sizes to run |
 | `TP` | `32` | tensor-parallel size |
 | `MNS` | `32` | max-num-seqs (must be ≥ max concurrency, else requests queue) |
-| `KV_CACHE_DTYPE` | `auto` | `auto` = bf16 KV cache; `fp8_e4m3` = fp8 KV cache |
+| `KV_CACHE_DTYPE` | per-size | bf16 at 4k, `fp8_e4m3` at 16k/32k/64k (set per input size). Override to force one dtype everywhere. |
+| `APC` | `1` | `1` = enable prefix caching (`--enable-prefix-caching`); the big TTFT win for repeated context. Requires `SEG < max-model-len`. |
 | `MODEL` | `google/gemma-4-31B-it` | checkpoint (HF id or local path) |
 | `SERVING_PKG` | `./serving_pkg` | Gemma4 registration package (bundled); auto-added to `PYTHONPATH` |
 | `BASE_URL` | `http://localhost:8000` | server URL (use with `SKIP_LAUNCH=1`) |
 | `SKIP_LAUNCH` | `0` | `1` = benchmark an already-running server at `BASE_URL` |
 
-Per input size, `run_benchmark.sh` launches the server with:
+### Default config: optimized for repeated-context (RAG)
 
-| input | max-model-len | segment | buckets |
-|---|---|---|---|
-| 4k  | 5120  | 4096 | 512,1024,2048,4096 |
-| 16k | 20480 | 4096 | 4096 |
-| 32k | 36864 | 4096 | 4096 |
-| 64k | 69632 | 4096 | 4096 |
+Per input size, `run_benchmark.sh` launches the server with **`seg=512` + prefix caching
+(APC) + FP8-KV (≥16k) + right-sized `max-model-len`** — the config that produces the
+reference numbers below. This is tuned for **repeated-context / RAG** traffic (a shared
+context prefix that gets cached, plus a short unique query per request):
+
+| input | max-model-len | segment (`SEG`) | buckets | KV cache | prefix caching |
+|---|---:|---:|---:|---|---|
+| 4k  | 5120  | 512 | 512 | bf16 (auto) | on |
+| 16k | 17408 | 512 | 512 | **fp8_e4m3** | on |
+| 32k | 33792 | 512 | 512 | **fp8_e4m3** | on |
+| 64k | 66560 | 512 | 512 | **fp8_e4m3** | on |
+
+> **Cold-unique traffic?** If prompts don't repeat (no shared prefix to cache), use the
+> baseline `seg=4096` / bf16-KV config instead — the per-size lines are preserved as a
+> comment in `run_benchmark.sh`. See **[RESULTS.md](./RESULTS.md)** for both.
+
+Full measured TTFT / TPOT / E2E / throughput tables for both configs: **[RESULTS.md](./RESULTS.md)**.
 
 ## Output
 
 `results_<timestamp>/` contains per-size JSON, `summary.txt` (human-readable table), `summary.csv`, and
-server/benchmark logs. Example:
+server/benchmark logs. Example (16k, optimized config):
 ```
 ### 16k input, 40 output tokens
   conc   TTFT_s  TTFT_p99   TPOT_ms    E2E_s    tok/s  tok/s/req
-     1    0.471     0.471     31.20    1.520      3.0       3.0
+     1    0.463     0.463   1084.74   30.836      0.9       0.94
+     8    2.551     4.044    993.45   34.341      7.8       0.97
      ...
 ```
 
 ## Reference numbers (trn2.48xlarge, TP=32, 40 output tokens) — TTFT (seconds)
 
-For sanity-checking your run. Numbers vary with instance, vLLM-Neuron build, and KV-cache dtype — treat
-as a ballpark, not an exact target.
+Measured with the default optimized config (`seg=512` + APC + FP8-KV, cache-hit workload).
+For sanity-checking your run — numbers vary with instance, vLLM-Neuron build, and traffic
+pattern. Full TTFT / TPOT / E2E / throughput tables (and the baseline config) are in
+**[RESULTS.md](./RESULTS.md)**.
 
 | concurrency | 4k | 16k | 32k | 64k |
 |---|---|---|---|---|
-| 1  | 0.409 | 0.471 | 0.530  | 0.661  |
-| 2  | 0.611 | 0.701 | 0.819  | 1.010  |
-| 4  | 1.011 | 1.184 | 1.230  | 1.427  |
-| 8  | 2.066 | 2.156 | 2.128  | 3.048  |
-| 16 | 3.338 | 3.515 | 4.558  | 13.174 |
-| 32 | 6.444 | 8.521 | 21.375 | 33.075 |
+| 1  | 0.409 | 0.463 | 0.504  | 0.675  |
+| 2  | 0.610 | 0.699 | 0.778  | 1.390  |
+| 4  | 0.998 | 1.105 | 1.700  | 1.908  |
+| 8  | 1.779 | 2.551 | 3.240  | 3.520  |
+| 16 | 3.335 | 3.463 | 4.972  | 19.406 |
+| 32 | 6.432 | 8.343 | 21.694 | 51.624 |
 
 ## Files
 - `SETUP.md`          — Step 1: beta container setup
+- `RESULTS.md`        — measured TTFT / TPOT / E2E / throughput tables (optimized + baseline)
 - `run_benchmark.sh`  — main entry (all input sizes + summary)
 - `launch_serve.sh`   — launches a Gemma4-31B server for one config (loads `serving_pkg/`)
 - `bench.py`          — concurrency sweep client (TTFT / TPOT / E2E), stdlib only
