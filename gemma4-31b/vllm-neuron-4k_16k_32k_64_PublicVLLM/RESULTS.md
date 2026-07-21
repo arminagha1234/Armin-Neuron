@@ -11,86 +11,94 @@ Measured on **trn2.48xlarge, TP=32**, the **public GA** vLLM NeuronX DLC
 > [`vllm-neuron-4k_16k_32k_64k`](../vllm-neuron-4k_16k_32k_64k) example. Same model code,
 > same benchmark, **no private-beta ECR image** — it runs on the publicly available DLC.
 
-## Config — per input size (optimized)
+## KV cache: bf16 and fp8_e4m3, side by side
 
-| input | `max-model-len` | segment (`SEG`) | KV cache | prefix caching |
-|---|---:|---:|---|---|
-| 4k  | 5120  | 512 | bf16 (auto) | on |
-| 16k | 17408 | 512 | **fp8_e4m3** | on |
-| 32k | 33792 | 512 | **fp8_e4m3** | on |
-| 64k | 66560 | 512 | **fp8_e4m3** | on |
+Each long-context size (16k/32k/64k) was measured with **both** KV-cache dtypes so you can pick
+the tradeoff. 4k uses bf16 only (its KV is tiny). Common config: TP=32, `max-num-seqs=32`,
+greedy, `seg=512` (segmented/chunked prefill auto-enabled), APC on, `max-model-len` =
+5120/17408/33792/66560.
 
-TP=32, `max-num-seqs=32`, greedy, `seg=512` (segmented/chunked prefill auto-enabled).
-Reproduce with `bash run_benchmark_public.sh`.
+**Effective concurrency ceiling** (worst-case, no prefix-cache hit) — fp8 KV is half the size,
+so it fits ~2× the concurrent requests before queueing:
 
-## TTFT — Time To First Token (seconds, mean)
+| input | bf16 KV cap | fp8_e4m3 KV cap |
+|---|---:|---:|
+| 4k  | 32+ | — |
+| 16k | 16  | 32+ |
+| 32k | 9   | 18  |
+| 64k | 4   | 9   |
 
-| concurrency | 4k | 16k | 32k | 64k |
+**Takeaway:** at **low concurrency the two are within noise** (TTFT is prefill-bound, TPOT is
+similar). fp8's advantage is **headroom** — at long context + high concurrency, bf16 hits its
+KV ceiling sooner and TTFT balloons from queueing. Use **fp8 for long-context / high-concurrency**
+serving; **bf16 is fine** for low-concurrency or short context and avoids KV quantization.
+
+## 4k input (bf16 KV) — `max-model-len=5120`
+
+| concurrency | TTFT (s) | TPOT (ms) | E2E (s) | agg tok/s |
 |---:|---:|---:|---:|---:|
-| 1  | 0.123 | 0.227 | 0.362 | 0.620 |
-| 2  | 0.184 | 0.338 | 0.809 | 0.948 |
-| 4  | 0.302 | 0.950 | 1.000 | 1.379 |
-| 8  | 0.507 | 0.831 | 1.411 | 2.710 |
-| 16 | 0.917 | 1.595 | 3.724 | 16.658 |
-| 32 | 1.754 | 4.307 | 14.961 | 40.990 |
+| 1  | 0.123 | 460 | 16.21 | 2.2 |
+| 2  | 0.184 | 455 | 16.33 | 4.5 |
+| 4  | 0.302 | 461 | 16.55 | 8.8 |
+| 8  | 0.507 | 469 | 16.96 | 17.0 |
+| 16 | 0.917 | 479 | 17.79 | 32.6 |
+| 32 | 1.754 | 489 | 19.47 | 61.4 |
 
-## TPOT — Time Per Output Token (ms, mean)
+## 16k input — bf16 vs fp8_e4m3 KV — `max-model-len=17408`
 
-| concurrency | 4k | 16k | 32k | 64k |
-|---:|---:|---:|---:|---:|
-| 1  | 460 | 573 | 588 | 639 |
-| 2  | 455 | 560 | 583 | 645 |
-| 4  | 461 | 573 | 580 | 676 |
-| 8  | 469 | 586 | 618 | 681 |
-| 16 | 479 | 604 | 607 | 687 |
-| 32 | 489 | 638 | 609 | 707 |
+| conc | TTFT bf16 | TTFT fp8 | TPOT bf16 | TPOT fp8 | E2E bf16 | E2E fp8 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1  | 0.222 | 0.227 | 555 | 573 | 19.10 | 20.29 |
+| 2  | 0.355 | 0.338 | 558 | 560 | 19.32 | 20.48 |
+| 4  | 0.608 | 0.950 | 563 | 573 | 19.74 | 21.28 |
+| 8  | 0.872 | 0.831 | 565 | 586 | 20.34 | 21.48 |
+| 16 | 2.421 | 1.595 | 579 | 604 | 22.57 | 22.92 |
+| 32 | 13.416 | 4.307 | 585 | 638 | 33.79 | 26.96 |
 
-## E2E — End-to-End latency for 40 output tokens (seconds, mean)
+## 32k input — bf16 vs fp8_e4m3 KV — `max-model-len=33792`
 
-| concurrency | 4k | 16k | 32k | 64k |
-|---:|---:|---:|---:|---:|
-| 1  | 16.21 | 20.29 | 19.76 | 23.63 |
-| 2  | 16.33 | 20.48 | 20.35 | 24.17 |
-| 4  | 16.55 | 21.28 | 20.79 | 24.99 |
-| 8  | 16.96 | 21.48 | 21.71 | 27.16 |
-| 16 | 17.79 | 22.92 | 25.07 | 41.36 |
-| 32 | 19.47 | 26.96 | 36.61 | 66.24 |
+| conc | TTFT bf16 | TTFT fp8 | TPOT bf16 | TPOT fp8 | E2E bf16 | E2E fp8 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1  | 0.372 | 0.362 | 513 | 588 | 18.85 | 19.76 |
+| 2  | 0.579 | 0.809 | 549 | 583 | 19.19 | 20.35 |
+| 4  | 0.846 | 1.000 | 541 | 580 | 19.73 | 20.79 |
+| 8  | 1.750 | 1.411 | 538 | 618 | 21.17 | 21.71 |
+| 16 | 11.963 | 3.724 | 537 | 607 | 31.54 | 25.07 |
+| 32 | 30.987 | 14.961 | 549 | 609 | 50.83 | 36.61 |
 
-## Aggregate output throughput (tokens/sec)
+## 64k input — bf16 vs fp8_e4m3 KV — `max-model-len=66560`
 
-| concurrency | 4k | 16k | 32k | 64k |
-|---:|---:|---:|---:|---:|
-| 1  | 2.2 | 1.8 | 1.7 | 1.6 |
-| 2  | 4.5 | 3.6 | 3.3 | 3.1 |
-| 4  | 8.8 | 6.8 | 6.8 | 5.8 |
-| 8  | 17.0 | 13.5 | 12.6 | 10.8 |
-| 16 | 32.6 | 25.3 | 23.2 | 10.5 |
-| 32 | 61.4 | 43.2 | 23.7 | 10.6 |
+| conc | TTFT bf16 | TTFT fp8 | TPOT bf16 | TPOT fp8 | E2E bf16 | E2E fp8 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1  | 0.637 | 0.620 | 717 | 639 | 25.75 | 23.63 |
+| 2  | 0.978 | 0.948 | 687 | 645 | 26.30 | 24.17 |
+| 4  | 2.276 | 1.379 | 706 | 676 | 28.00 | 24.99 |
+| 8  | 16.082 | 2.710 | 718 | 681 | 41.98 | 27.16 |
+| 16 | 44.551 | 16.658 | 717 | 687 | 70.55 | 41.36 |
+| 32 | 98.915 | 40.990 | 720 | 707 | 124.95 | 66.24 |
 
 ---
 
-## Public (v0.21) vs private-beta reference
-
-The public stack matches or beats the private-beta
-[`vllm-neuron-4k_16k_32k_64k/RESULTS.md`](../vllm-neuron-4k_16k_32k_64k/RESULTS.md):
-
-- **TPOT is lower on public** across the board: ~460–707 ms (public) vs ~688–1244 ms (beta).
-- **Single-stream TTFT** is comparable/better: 0.123/0.227/0.362/0.620 s (public, 4k/16k/32k/64k)
-  vs 0.409/0.463/0.504/0.675 s (beta).
-- **High-concurrency long-context TTFT** climbs once offered load exceeds the KV concurrency
-  ceiling and requests queue. The public scheduler reports the effective cap:
-  32k caps at ~18 concurrent, 64k at ~9 (fp8-KV at these lengths). This mirrors the beta's
-  saturation behavior (64k saturates ~C=8; 4k scales to C=32).
-
 ## Reading the numbers
-- **TTFT rises with context** at C=1 (0.12 → 0.62 s for 4k → 64k) — the first-decode step
-  over a longer cached KV. It stays low with input length thanks to segmented (windowed)
-  attention over the cached prefix.
-- **TPOT** (~0.46–0.71 s/token) is decode, KV-cache-I/O-bound; batching amortizes it
-  (aggregate throughput scales to ~C=16–32 at short context).
-- These are **cache-hit** numbers (APC). Cold-unique long prompts pay a one-time per-prefix
-  prefill cost.
+- **Low concurrency (C=1–4):** bf16 ≈ fp8. TTFT is prefill-bound and nearly identical; TPOT is
+  within ~10%. If you serve one-to-a-few streams, either KV dtype is fine.
+- **High concurrency + long context:** fp8 wins by a wide margin — not because a single request
+  is faster, but because fp8 KV fits ~2× the concurrent requests, so bf16 queues (its TTFT at
+  16k C=32 is 13.4 s vs fp8 4.3 s; 64k C=32 is 98.9 s vs fp8 41.0 s).
+- **TTFT rises with context** at C=1 (0.12 → 0.64 s for 4k → 64k) but stays low thanks to
+  segmented (windowed) attention over the cached prefix.
+- All numbers are **cache-hit** (APC); cold-unique long prompts pay a one-time per-prefix cost.
+
+## Public (v0.21) vs private-beta reference
+The public stack matches or beats the private-beta
+[`vllm-neuron-4k_16k_32k_64k/RESULTS.md`](../vllm-neuron-4k_16k_32k_64k/RESULTS.md): TPOT ~460–720 ms
+(public) vs ~688–1244 ms (beta), and comparable/better single-stream TTFT.
+
+## GPU (H100) comparison
+See [`PERF_VS_GPU.md`](./PERF_VS_GPU.md) for the TTFT comparison vs H100 (uses the recommended
+optimized config — fp8 KV at ≥16k for concurrency headroom).
 
 ## Provenance
-Raw per-size JSON + CSV in [`results/`](./results). Serve/bench logs are produced under
-`results_<timestamp>/` when you run `run_benchmark_public.sh`.
+Raw per-size JSON in [`results/`](./results): `results/{4k,16k,32k,64k}.json` are the **bf16**
+runs; `results/fp8/{16k,32k,64k}.json` are the **fp8_e4m3** runs. Serve/bench logs are produced
+under `results_<timestamp>/` when you run `run_benchmark_public.sh`.
