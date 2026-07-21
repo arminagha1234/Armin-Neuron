@@ -87,7 +87,7 @@ optimized config) vs an **H100** baseline (all input sizes), across input size a
 (1→32). Lower is better. Trn2 numbers are the same public-GA run recorded in
 [`RESULTS.md`](./RESULTS.md). Standalone doc: [`PERF_VS_GPU.md`](./PERF_VS_GPU.md).
 
-![Gemma4-31B TTFT: Trainium2 vs H100](./assets/ttft_trn2_vs_gpu.png)
+![Gemma4-31B TTFT: Trainium2 vs H100](./assets/ttft_trn2_vs_h100_ms.png)
 
 **Headline**
 - **4k: Trainium2 ≈ H100** — essentially a tie across all concurrency (within ~10–20%).

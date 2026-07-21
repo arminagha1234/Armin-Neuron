@@ -8,7 +8,7 @@ input sizes). Values are mean TTFT in **seconds**.
 The Trainium2 numbers are the exact public-GA run recorded in [`RESULTS.md`](./RESULTS.md)
 (seg=512 + prefix caching + fp8-KV ≥16k on the public vLLM-Neuron v0.21 DLC).
 
-![TTFT: Trainium2 vs GPU](./assets/ttft_trn2_vs_gpu.png)
+![TTFT: Trainium2 vs GPU](./assets/ttft_trn2_vs_h100_ms.png)
 
 *(Regenerate the chart with `python3 make_perf_chart.py`.)*
 
