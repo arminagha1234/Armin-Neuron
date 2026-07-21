@@ -92,6 +92,6 @@ fig.tight_layout(rect=[0, 0.03, 1, 0.93])
 
 out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 os.makedirs(out_dir, exist_ok=True)
-out = os.path.join(out_dir, "ttft_trn2_vs_gpu.png")
+out = os.path.join(out_dir, "ttft_trn2_vs_h100_ms.png")
 fig.savefig(out, dpi=140)
 print("wrote", out)

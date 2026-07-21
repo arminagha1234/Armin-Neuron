@@ -87,7 +87,7 @@ optimized config) vs an **H100** baseline (all input sizes), across input size a
 (1→32). Lower is better. Trn2 numbers are the same public-GA run recorded in
 [`RESULTS.md`](./RESULTS.md). Standalone doc: [`PERF_VS_GPU.md`](./PERF_VS_GPU.md).
 
-![Gemma4-31B TTFT: Trainium2 vs H100](./assets/ttft_trn2_vs_gpu.png)
+![Gemma4-31B TTFT: Trainium2 vs H100](./assets/ttft_trn2_vs_h100_ms.png)
 
 **Headline**
 - **4k: Trainium2 ≈ H100** — essentially a tie across all concurrency (within ~10–20%).
@@ -144,3 +144,51 @@ single-stream and mid-concurrency TTFT is materially lower — while at 4k the t
 
 *Metric: mean TTFT (request sent → first output token). Trn2 = trn2.48xlarge, TP=32, greedy,
 public GA optimized config. GPU baseline: H100 (all sizes), vendor-typical vLLM serving.*
+
+## TP=8 (two-chip, bf16) — an alternative config: TTFT vs GPU, and vs the shipped TP=32
+
+The section above is the **shipped TP=32** config (lowest single-stream TTFT). Below is the same
+`google/gemma-4-31b-it` benchmark re-run on a **TP=8** config — 2 chips / 8 logical cores (LNC2),
+bf16 KV — the **throughput/density** alternative. All four input sizes **fit at TP=8 bf16** on a
+single trn2.48xlarge (none OOM). Full sweep 1→32, gen=40, seg=512 + prefix caching, public
+vLLM-Neuron v0.21. Standalone doc: [`PERF_VS_GPU_TP8.md`](./PERF_VS_GPU_TP8.md); source JSONs:
+[`results/tp8/`](./results/tp8).
+
+### TP=8 (bf16) vs GPU (H100)
+![Gemma4-31B TTFT: Trainium2 TP=8 vs H100](./assets/ttft_trn2_tp8_vs_h100_ms.png)
+
+### TP=32 (shipped) vs TP=8 vs GPU (H100)
+![Gemma4-31B TTFT: TP=32 vs TP=8 vs H100](./assets/ttft_trn2_tp8_vs_tp32_vs_h100_ms.png)
+
+**How to read this (TTFT is TP=8's weaker metric — that's the point):** TP=32 shards the prefill
+matmuls 32 ways, so it produces the first token fastest (**1.5–2.1× lower TTFT single-stream**).
+TP=8's advantage is everywhere else: **~3–4× faster TPOT** (per-token decode), **4× replica
+density** (2 chips ⇒ **8 replicas per trn2.48xl** vs 2 at TP=32), and lower end-to-end latency for
+typical short generations. Even so, at long context + low/mid concurrency (32k/64k, C≤8 — the RAG
+regime) TP=8 **still beats H100 on TTFT**.
+
+**TP=8 bf16 vs H100 — TTFT (s), selected points**
+| size | conc | Trn2 TP=8 | H100 | faster |
+|---|---:|---:|---:|:--|
+| 4k  | 1  | 0.185 | 0.121 | GPU 1.5× |
+| 16k | 1  | 0.419 | 0.449 | ~tie |
+| 32k | 1  | 0.698 | 0.992 | **Trn2 1.4×** |
+| 32k | 8  | 2.872 | 3.827 | **Trn2 1.3×** |
+| 64k | 1  | 1.289 | 2.249 | **Trn2 1.7×** |
+| 64k | 4  | 3.116 | 5.139 | **Trn2 1.6×** |
+
+**TP=8 vs shipped TP=32 — TTFT (s), single stream (conc=1)**
+| size | TP=32 (shipped) | TP=8 (2 chips) | TP=32 advantage |
+|---|---:|---:|:--|
+| 4k  | 0.123 | 0.185 | 1.5× lower TTFT |
+| 16k | 0.227 | 0.419 | 1.8× |
+| 32k | 0.362 | 0.698 | 1.9× |
+| 64k | 0.620 | 1.289 | 2.1× |
+
+**Which to pick**
+- **Latency-first, single stream:** TP=32 (shipped) — lowest TTFT.
+- **Throughput / cost-per-token / many replicas:** TP=8 bf16 — 4× density, ~3–4× faster decode,
+  still TTFT-competitive with H100 at long context.
+
+*Metric: mean TTFT. Trn2 TP=8 = trn2.48xlarge, TP=8 (2 chips, LNC2), bf16 KV, greedy, seg=512 +
+prefix caching, public vLLM-Neuron v0.21. TP=32 = the shipped GA config above. GPU baseline: H100.*
