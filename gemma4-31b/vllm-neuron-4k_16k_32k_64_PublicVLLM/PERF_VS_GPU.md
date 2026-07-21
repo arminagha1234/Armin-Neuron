@@ -2,8 +2,8 @@
 
 Time-To-First-Token (prefill latency) for `google/gemma-4-31b-it`, **Trainium2**
 (trn2.48xlarge, TP=32, **public GA** optimized config) vs a **GPU** baseline, across input
-size (4k/16k/32k/64k) and concurrency (1→32). Lower is better. GPU baseline is **H100** for 4k
-and **H200** for 16k/32k/64k. Values are mean TTFT in **seconds**.
+size (4k/16k/32k/64k) and concurrency (1→32). Lower is better. GPU baseline is **H100** (all
+input sizes). Values are mean TTFT in **seconds**.
 
 The Trainium2 numbers are the exact public-GA run recorded in [`RESULTS.md`](./RESULTS.md)
 (seg=512 + prefix caching + fp8-KV ≥16k on the public vLLM-Neuron v0.21 DLC).
@@ -71,4 +71,4 @@ and mid-concurrency TTFT is materially lower — while at 4k the two are neck-an
   E2E/TPOT figures weren't part of this dataset.
 - **Trn2 config:** trn2.48xlarge, TP=32, greedy, public GA optimized (seg=512 + prefix caching
   + fp8-KV ≥16k). Same run as [`RESULTS.md`](./RESULTS.md).
-- **GPU baseline:** H100 (4k) / H200 (16k/32k/64k), vendor-typical vLLM serving.
+- **GPU baseline:** H100 (all input sizes), vendor-typical vLLM serving.

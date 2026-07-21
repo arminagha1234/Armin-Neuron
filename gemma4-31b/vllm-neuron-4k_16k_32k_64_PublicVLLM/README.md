@@ -79,3 +79,11 @@ curl -s http://localhost:8000/v1/chat/completions -H 'Content-Type: application/
 - **Optional v2 NKI prefill kernel:** off by default (`GEMMA4_V2_PREFILL=1` to opt in). The
   stock segmented-CTE prefill path is already fast on the public stack; the published numbers
   use the default.
+
+## Trainium2 vs GPU (H100) — TTFT
+
+Time-To-First-Token, Trainium2 public GA (trn2.48xlarge, TP=32) vs H100, across input size and
+concurrency (lower is better). Trn2 ties H100 at 4k and pulls ahead at 16k/32k/64k across
+low-to-mid concurrency. Full tables + analysis: [`PERF_VS_GPU.md`](./PERF_VS_GPU.md).
+
+![Gemma4-31B TTFT: Trainium2 vs H100](./assets/ttft_trn2_vs_gpu.png)
