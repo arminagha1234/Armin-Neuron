@@ -40,7 +40,7 @@ mounted into the container (see the launch runbook in the sibling example for ho
 
 ```bash
 # 0. inside the DLC container, with this directory available
-cd vllm-neuron-public-v0.21
+cd vllm-neuron-4k_16k_32k_64_PublicVLLM
 
 # 1. install the model into the plugin + register the architecture
 bash install_public.sh
