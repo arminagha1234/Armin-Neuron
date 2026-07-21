@@ -9,6 +9,11 @@ This is the public / GA counterpart of the private-beta example
 same benchmark methodology (4k/16k/32k/64k × concurrency 1–32, 40 output tokens), running
 on the public stack. Measured numbers: [`RESULTS.md`](./RESULTS.md).
 
+> ## 👉 New here? Start with [`LAUNCH.md`](./LAUNCH.md)
+> A dead-simple, copy-paste, step-by-step runbook from a bare trn2 instance all the way to
+> results — no prior Neuron/vLLM knowledge needed. The "Quick start" below is the short version
+> for people who already have the box and weights set up.
+
 ## Why a separate example
 The private-beta example loads the Gemma4 model via `PYTHONPATH` + `sitecustomize.py` into the
 beta plugin (vLLM 0.19). The public DLC ships **vLLM 0.21 / Neuron SDK 2.31** with a different
