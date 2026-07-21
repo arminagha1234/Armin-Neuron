@@ -1,4 +1,4 @@
-# Gemma4-31B — Trainium2 (public GA) vs GPU (H100/H200): TTFT comparison
+# Gemma4-31B — Trainium2 (public GA) vs GPU (H100): TTFT comparison
 
 Time-To-First-Token (prefill latency) for `google/gemma-4-31b-it`, **Trainium2**
 (trn2.48xlarge, TP=32, **public GA** optimized config) vs a **GPU** baseline, across input
@@ -14,7 +14,7 @@ The Trainium2 numbers are the exact public-GA run recorded in [`RESULTS.md`](./R
 
 ## Headline
 - **4k: Trainium2 ≈ H100.** Essentially a tie across all concurrency (within ~10–20%).
-- **16k / 32k / 64k: Trainium2 beats H200** across low-to-mid concurrency — up to **~2×** at
+- **16k / 32k / 64k: Trainium2 beats H100** across low-to-mid concurrency — up to **~2×** at
   16k, **~2.7×** at 32k, and **~3.6×** at 64k (single stream).
 - **Convergence at C=32.** At the highest concurrency for long context both platforms are
   KV/scheduling-bound and queueing dominates, so the lines meet (GPU marginally ahead at 32k/64k C=32).
@@ -29,8 +29,8 @@ The Trainium2 numbers are the exact public-GA run recorded in [`RESULTS.md`](./R
 | 16 | 0.917 | 0.806 | ~tie |
 | 32 | 1.754 | 1.494 | GPU 1.2× |
 
-## 16k input — TTFT (s)  ·  GPU = H200
-| concurrency | Trainium2 (GA) | H200 | faster |
+## 16k input — TTFT (s)  ·  GPU = H100
+| concurrency | Trainium2 (GA) | H100 | faster |
 |---:|---:|---:|:--|
 | 1  | 0.227 | 0.449 | **Trn2 2.0×** |
 | 2  | 0.338 | 0.627 | **Trn2 1.9×** |
@@ -39,8 +39,8 @@ The Trainium2 numbers are the exact public-GA run recorded in [`RESULTS.md`](./R
 | 16 | 1.595 | 3.207 | **Trn2 2.0×** |
 | 32 | 4.307 | 6.156 | **Trn2 1.4×** |
 
-## 32k input — TTFT (s)  ·  GPU = H200
-| concurrency | Trainium2 (GA) | H200 | faster |
+## 32k input — TTFT (s)  ·  GPU = H100
+| concurrency | Trainium2 (GA) | H100 | faster |
 |---:|---:|---:|:--|
 | 1  | 0.362 | 0.992 | **Trn2 2.7×** |
 | 2  | 0.809 | 1.372 | **Trn2 1.7×** |
@@ -49,8 +49,8 @@ The Trainium2 numbers are the exact public-GA run recorded in [`RESULTS.md`](./R
 | 16 | 3.724 | 7.094 | **Trn2 1.9×** |
 | 32 | 14.961 | 13.597 | GPU 1.1× |
 
-## 64k input — TTFT (s)  ·  GPU = H200
-| concurrency | Trainium2 (GA) | H200 | faster |
+## 64k input — TTFT (s)  ·  GPU = H100
+| concurrency | Trainium2 (GA) | H100 | faster |
 |---:|---:|---:|:--|
 | 1  | 0.620 | 2.249 | **Trn2 3.6×** |
 | 2  | 0.948 | 3.192 | **Trn2 3.4×** |

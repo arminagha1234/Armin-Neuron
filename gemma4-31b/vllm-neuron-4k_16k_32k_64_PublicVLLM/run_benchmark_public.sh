@@ -7,6 +7,8 @@
 #   bash run_benchmark_public.sh                     # run everything (server per input size)
 #   ONLY=4k,16k bash run_benchmark_public.sh          # subset of input sizes
 #   SKIP_LAUNCH=1 BASE_URL=http://host:8000 bash run_benchmark_public.sh   # bench an EXISTING server
+#   KV_OVERRIDE=auto bash run_benchmark_public.sh      # bf16 KV for ALL sizes
+#   KV_OVERRIDE=fp8_e4m3 bash run_benchmark_public.sh  # fp8 KV for ALL sizes
 #
 # Run INSIDE the public DLC container (after install_public.sh + make_local_model.py).
 # =============================================================================
@@ -30,8 +32,10 @@ echo "Gemma4-31B PUBLIC benchmark :: $STAMP"
 echo "  output_tokens=$GEN  concurrency=$LEVELS  TP=$TP  MNS=$MNS  base_url=$BASE_URL  -> $OUT"
 
 # name  LEN     CTX     SEG  BUCKETS  KV_DTYPE
+# KV_OVERRIDE forces a single KV dtype for ALL sizes (e.g. KV_OVERRIDE=auto for bf16
+# everywhere, or KV_OVERRIDE=fp8_e4m3 for fp8 everywhere). Unset = per-size defaults below.
 run_one () {
-  local name=$1 len=$2 ctx=$3 seg=$4 buckets=$5 kv=$6
+  local name=$1 len=$2 ctx=$3 seg=$4 buckets=$5 kv=${KV_OVERRIDE:-$6}
   case ",$ONLY," in *",$name,"*) : ;; *) echo "-- skip $name"; return 0 ;; esac
   echo ""
   echo "=================== INPUT $name  (LEN=$len CTX=$ctx SEG=$seg KV=$kv APC=on) ==================="
