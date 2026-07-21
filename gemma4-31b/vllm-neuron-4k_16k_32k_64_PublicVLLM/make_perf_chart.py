@@ -12,15 +12,16 @@ import matplotlib.pyplot as plt
 CONC = [1, 2, 4, 8, 16, 32]
 
 # TTFT (seconds, mean). GPU baseline = H100 for 4k, H200 for 16k/32k/64k.
-# Trn2 = trn2.48xlarge, TP=32.
+# Trn2 = trn2.48xlarge, TP=32 — PUBLIC GA optimized config (seg=512 + APC + fp8-KV >=16k),
+# the same run recorded in RESULTS.md.
 DATA = {
-    "4k input":  {"gpu_label": "H100", "trn2": [0.409, 0.611, 1.011, 2.066, 3.338, 6.444],
+    "4k input":  {"gpu_label": "H100", "trn2": [0.123, 0.184, 0.302, 0.507, 0.917, 1.754],
                    "gpu": [0.121, 0.164, 0.301, 0.468, 0.806, 1.494]},
-    "16k input": {"gpu_label": "H200", "trn2": [0.471, 0.701, 1.184, 2.156, 3.515, 8.521],
+    "16k input": {"gpu_label": "H200", "trn2": [0.227, 0.338, 0.950, 0.831, 1.595, 4.307],
                    "gpu": [0.449, 0.627, 1.009, 1.727, 3.207, 6.156]},
-    "32k input": {"gpu_label": "H200", "trn2": [0.530, 0.819, 1.230, 2.128, 4.558, 21.375],
+    "32k input": {"gpu_label": "H200", "trn2": [0.362, 0.809, 1.000, 1.411, 3.724, 14.961],
                    "gpu": [0.992, 1.372, 2.201, 3.827, 7.094, 13.597]},
-    "64k input": {"gpu_label": "H200", "trn2": [0.661, 1.010, 1.427, 3.048, 13.174, 33.075],
+    "64k input": {"gpu_label": "H200", "trn2": [0.620, 0.948, 1.379, 2.710, 16.658, 40.990],
                    "gpu": [2.249, 3.192, 5.139, 9.005, 16.773, 32.258]},
 }
 
@@ -28,7 +29,7 @@ TRN2_C = "#ff6a00"   # Trainium orange
 GPU_C = "#1f77b4"    # GPU blue
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 8.5))
-fig.suptitle("Gemma4-31B — Time To First Token: Trainium2 (TP=32) vs GPU\n"
+fig.suptitle("Gemma4-31B — Time To First Token: Trainium2 public GA (TP=32) vs GPU\n"
              "lower is better · TTFT (s) vs concurrency", fontsize=14, fontweight="bold")
 
 for ax, (name, d) in zip(axes.flat, DATA.items()):
@@ -51,8 +52,8 @@ for ax, (name, d) in zip(axes.flat, DATA.items()):
             ax.axvspan(CONC[i], CONC[i + 1], color=TRN2_C, alpha=0.06)
 
 fig.text(0.5, 0.005,
-         "Shaded band = Trainium2 faster. Trn2 wins TTFT at long context (32k/64k) across most "
-         "concurrency; GPU leads at short context (4k/16k).",
+         "Shaded band = Trainium2 faster (public GA config). Trn2 ties H100 at 4k and beats H200 "
+         "at 16k/32k/64k across low-to-mid concurrency; lines converge at C=32.",
          ha="center", fontsize=9, style="italic")
 fig.tight_layout(rect=[0, 0.03, 1, 0.94])
 
