@@ -8,63 +8,9 @@ so nothing can be served from cache. Every number here is a genuine cold prefill
 This is the honest, apples-to-apples counterpart of the APC/cache-hit sibling
 [`../vllm-neuron-4k_16k_32k_64_PublicVLLM`](../vllm-neuron-4k_16k_32k_64_PublicVLLM).
 
-## 🏆 Headline — cold TTFT by input size (conc=1)
-
-![Gemma4-31B cold TTFT by input size](./assets/ttft_cold_by_size.png)
-
-| input | 4k | 8k | 16k | 32k | 64k |
-|---|---:|---:|---:|---:|---:|
-| **TTFT (conc=1)** | **0.22 s** | **0.39 s** | **0.75 s** | **2.05 s** | **4.06 s** |
-| prefill path | single-shot | single-shot | single-shot | seg + **SWA-windowed** | seg + **SWA-windowed** |
-| vs full-span | — | — | — | 3.06 s (**−33%**) | 6.09 s (**−33%**) |
-
-- **≤8k clears the 500 ms TTFT SLA cold** (0.22 / 0.39 s) — the dominant RAG traffic.
-- **16k = 0.75 s** cold, single-shot.
-- **32k / 64k use the validated SWA windowed-prior fix** → **−33%** vs the full-span segmented path,
-  with **byte-identical output** (token parity). See [`SWA_WINDOW_FINDING.md`](./SWA_WINDOW_FINDING.md).
-
-## The long-context win — SWA windowed prior (−33%, correctness-preserving)
-
-![SWA windowed-prior win at 32k/64k](./assets/ttft_windowing_win.png)
-
-Above 16k, prefill is segmented (chunked). The stock path re-gathers the **full** prior-KV span for
-**every** layer — but the **50 of 60 sliding-window layers** only ever attend to the last 1024 keys.
-Windowing the SWA-layer prior to its trailing ~1024 tokens (static shape, dynamic offset) cuts that
-waste. It is **numerically exact** (the kernel's causal + sliding-window masks are shift-invariant),
-proven three ways: CPU masking (2.4e-7), CPU gather plumbing (0.0), and on-device token parity
-(byte-identical greedy tokens at 18k). Patch: [`patches/patch_swa_window_prior_v2.py`](./patches/patch_swa_window_prior_v2.py).
-
-| conc | 32k full-span | 32k windowed | Δ | 64k full-span | 64k windowed | Δ |
-|---:|---:|---:|:--:|---:|---:|:--:|
-| 1 | 3.06 s | **2.05 s** | −33% | 6.09 s | **4.06 s** | −33% |
-| 2 | 4.59 s | **3.05 s** | −34% | 9.15 s | **6.07 s** | −34% |
-| 4 | 8.34 s | **7.13 s** | −14% | 15.94 s | **11.99 s** | −25% |
-
-(The win is largest at low/mid concurrency; at conc=4 for long context, bf16 KV capacity starts to
-queue requests, so the fixed savings are a smaller fraction of the total.)
-
-## Cold TTFT vs concurrency (best config, all sizes)
-
-![Gemma4-31B cold TTFT vs concurrency](./assets/ttft_cold_conc_sweep.png)
-
-Full tables (TTFT / TPOT / E2E, all concurrency levels): **[RESULTS.md](./RESULTS.md)**.
-
-| conc | 4k | 8k | 16k | 32k | 64k |
-|---:|---:|---:|---:|---:|---:|
-| 1  | 0.224 | 0.390 | 0.754 | **2.046** | **4.064** |
-| 2  | 0.331 | 0.585 | 1.127 | **3.051** | **6.071** |
-| 4  | 0.605 | 0.969 | 1.944 | **7.132** | **11.991** |
-| 8  | 1.878 | 2.606 | 4.215 | — | — |
-| 16 | 4.983 | 6.406 | 9.429 | — | — |
-| 32 | 11.459 | 14.176 | 19.901 | — | — |
-
-(32k/64k stop at conc=4: bf16 KV capacity is exhausted before conc=8 at long context, so higher
-levels are head-of-line-queue-bound, not a meaningful single-request number. Use multiple replicas
-for concurrent long-context. 32k/64k are the **SWA-windowed** best numbers.)
-
 ## TP scaling — TP32 vs TP16 vs TP8 vs H100 (cold TTFT)
 
-Everything above is **TP=32** — the lowest-TTFT config. On trn2.48xlarge with **LNC=2**
+This no-APC cold benchmark runs at **TP=32** — the lowest-TTFT config. On trn2.48xlarge with **LNC=2**
 (`logical-neuroncore-config: 2`): 16 chips × 4 logical cores = 64 cores, 96 GB/chip = **24 GB per
 core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, **TP=16 = 4 chips**,
 **TP=8 = 2 chips**. Here is how cold TTFT scales as you shard across fewer chips, vs an H100 baseline.
