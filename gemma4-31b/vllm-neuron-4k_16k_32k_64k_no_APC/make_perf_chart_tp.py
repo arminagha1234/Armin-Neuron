@@ -12,8 +12,7 @@ Topology: LNC=2 (logical-neuroncore-config=2) -> 4 logical cores/chip, 96GB/chip
 - TP8 (2 chips): 4k/8k only — long-context 66560-config HBM-OOMs (27.45GB > 24GB/core).
 
 GPU baselines (two H100 configs):
-- "H100 (ref)": inherited vendor-typical baseline (config unspecified; from the APC
-  sibling comparison). No 8k point.
+- "H100 ×8 (TP8)": 8× H100 at TP=8 — a large 8-GPU config; fastest here. No 8k point.
 - "H100 2×80GB (TP2)": 2× H100 80GB, TP=2 — a comparable-scale GPU config. Trn2 TP32
   BEATS it at 4k/8k/16k (0.224/0.390/0.754 vs 0.240/0.461/1.008). No 32k/64k points.
 """
@@ -45,7 +44,7 @@ H100_TP2 = {"4k": [0.240,0.359,0.637,1.139,2.075,3.964], "8k": [0.461,0.694,1.19
 SERIES = [("TP32", TP32), ("TP16", TP16), ("TP8", TP8), ("H100", H100), ("H100_TP2", H100_TP2)]
 COLORS = {"TP32": "#ff6a00", "TP16": "#d1691f", "TP8": "#8a4b1f", "H100": "#1f77b4", "H100_TP2": "#17becf"}
 LABELS = {"TP32": "Trn2 TP32 (8 chips)", "TP16": "Trn2 TP16 (4 chips)", "TP8": "Trn2 TP8 (2 chips)",
-          "H100": "H100 (ref)", "H100_TP2": "H100 ×2 80GB (TP2)"}
+          "H100": "H100 ×8 (TP8)", "H100_TP2": "H100 ×2 80GB (TP2)"}
 OFF = {"TP32": -2, "TP16": -1, "TP8": 0, "H100": 1, "H100_TP2": 2}
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 os.makedirs(OUT, exist_ok=True)
@@ -91,7 +90,7 @@ def chart_sweep():
     panels = ["4k", "8k", "16k", "32k", "64k"]
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     fig.suptitle("Gemma4-31B cold TTFT vs concurrency — Trn2 TP32/TP16/TP8 vs H100 (bf16, no-APC, LNC=2)\n"
-                 "TP32=8 chips · TP16=4 chips · TP8=2 chips · two H100 configs: 'ref' and 'H100 ×2 80GB (TP2)'",
+                 "TP32=8 chips · TP16=4 chips · TP8=2 chips · H100 configs: ×8 (TP8) and ×2 80GB (TP2)",
                  fontsize=12, fontweight="bold")
     axf = axes.flat
     for ax, s in zip(axf, panels):
