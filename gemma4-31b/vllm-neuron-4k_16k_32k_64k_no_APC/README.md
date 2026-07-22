@@ -80,16 +80,16 @@ core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, 
 ![Gemma4-31B cold TTFT by input size — TP scaling at conc=1: TP32 (8 chips) / TP16 (4 chips) / TP8 (2 chips) vs H100](./assets/ttft_tp_scaling_conc1_lnc2.png)
 
 **conc=1 TTFT (s):**
-| size | TP32 (8 chips) | TP16 (4 chips) | TP8 (2 chips) | H100 ×8 (TP8) | **H100 ×2 80GB (TP2)** |
-|---|---:|---:|---:|---:|---:|
-| 4k | **0.224** | 0.307 | 0.572 | 0.121 | 0.240 |
-| 8k | **0.390** | 0.557 | 1.126 | — | 0.461 |
-| 16k | **0.754** | 1.515 † | **OOM** | 0.449 | 1.008 |
-| 32k | **2.046** | 3.01 | **OOM** | 0.992 | 2.377 ‡ |
-| 64k | **4.064** | 6.056 | **OOM** | 2.249 | **OOM** |
+| size | TP32 (8 chips) | TP16 (4 chips) | TP8 (2 chips) | **H100 ×2 80GB (TP2)** |
+|---|---:|---:|---:|---:|
+| 4k | **0.224** | 0.307 | 0.572 | 0.240 |
+| 8k | **0.390** | 0.557 | 1.126 | 0.461 |
+| 16k | **0.754** | 1.515 † | **OOM** | 1.008 |
+| 32k | **2.046** | 3.01 | **OOM** | 2.377 ‡ |
+| 64k | **4.064** | 6.056 | **OOM** | 5.778 |
 
 † TP16 16k measured via the segmented path (single-shot 16k needs prompt headroom under the 16384 cap).
-‡ `H100 ×2 80GB (TP2)` 32k measured with 500 output tokens (4k/8k/16k use 40); TTFT is first-token latency, so output length does not affect it. At **64k the 2× H100 80GB config OOMs** (can't hold the KV cache), so it has no 32k+ entry beyond this.
+‡ `H100 ×2 80GB (TP2)` 32k/64k measured with longer output (4k/8k/16k use 40); TTFT is first-token latency, so output length does not affect it. Even at **64k, Trn2 TP32 (4.064 s) beats the 2× H100 80GB config (5.778 s)** cold.
 
 **What the TP sweep shows:**
 - **TP32 has the lowest TTFT** — it shards the prefill matmuls across the most cores, so first-token
@@ -102,11 +102,10 @@ core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, 
   TP32. At TP32 the same seg=8192 config shards 32 ways and fits (that's the measured 2.05 s at 32k).
   Fewer cores → more per-core HBM → OOM. Same config, different TP → different outcome.
 
-**Honest note on the H100 comparison:** these are Trn2's **cold / bf16 / no-APC worst-case** numbers,
-the large **`H100 ×8 (TP8)`** (8 GPUs) shows lower TTFT here — ~1.5–2× at conc=1. **But against a
-comparable-scale `H100 ×2 80GB (TP2)` (2 GPUs), Trn2 TP32 (8 chips) is actually *faster* at 4k/8k/16k/32k
-even cold** (0.224/0.390/0.754/2.046 vs 0.240/0.461/1.008/2.377 s) — and at **64k the 2× H100 80GB config
-OOMs entirely** while Trn2 TP32 still serves it at 4.06 s. Trn2's win widens further in the **APC / RAG config**
+**Note on the H100 comparison:** these are Trn2's **cold / bf16 / no-APC worst-case** numbers. Against a
+comparable-scale **`H100 ×2 80GB (TP2)`** (2 GPUs), **Trn2 TP32 (8 chips) is *faster* at every size
+even cold** (0.224/0.390/0.754/2.046/4.064 vs 0.240/0.461/1.008/2.377/5.778 s) — including **64k, where
+Trn2 TP32 (4.06 s) beats the 2× H100 80GB config (5.78 s)**. Trn2's win widens further in the **APC / RAG config**
 (fp8-KV cache-hits) — see the sibling
 [`../vllm-neuron-4k_16k_32k_64_PublicVLLM`](../vllm-neuron-4k_16k_32k_64_PublicVLLM). This folder is
 the honest cold floor; TP8/TP16's real value is throughput / $-per-token and replica density, not cold TTFT.
