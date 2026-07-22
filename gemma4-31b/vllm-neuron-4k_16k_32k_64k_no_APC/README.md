@@ -1,5 +1,24 @@
 # Gemma4-31B on AWS Trainium2 — cold TTFT benchmark (no-APC, bf16, honest worst-case)
 
+> ### New here? Start with this.
+>
+> **What this is:** honest *cold* first-token latency (TTFT) for Gemma4-31B served on a single
+> AWS Trainium2 box (trn2.48xlarge), across 4k–64k input — prefix caching **off** and a unique
+> prompt on every request, so nothing is served from cache. The deliberate worst case, not a
+> cache-hit number.
+>
+> **Bottom line:** Trn2 (TP=32, 8 chips) serves cold in ~0.22 s @4k, ~0.75 s @16k, ~4.06 s @64k —
+> **faster than a comparable-scale 2-GPU H100 (×2 80GB) at every size.**
+>
+> **Want to reproduce it?** → **[LAUNCH.md](./LAUNCH.md)** is a copy-paste, line-by-line runbook.
+> First check you can clear these three gates — nothing runs without them:
+> 1. a **trn2.48xlarge** (Trainium2) — reserved via **Capacity Blocks**, not on-demand
+> 2. **vLLM-Neuron Beta image access** — your AWS account must be granted ECR pull by the Neuron team
+> 3. **Gemma4-31B weights** — gated on Hugging Face (accept the license), or provided out-of-band
+>
+> **Glossary:** *cold* = no cache reuse · *no-APC* = automatic prefix caching off · *TTFT* = time to
+> first token · *single-shot vs segmented* = prompt prefilled in one pass vs chunks (explained below).
+
 Serve and benchmark **`google/gemma-4-31b-it`** on AWS Trainium2 (trn2.48xlarge, TP=32) and measure
 **true cold prefill TTFT** across input sizes **4k / 8k / 16k / 32k / 64k** and a concurrency sweep,
 40 output tokens. **No prefix caching, bf16 KV (no FP8), a unique random prompt on every request** —
@@ -55,20 +74,6 @@ Trn2 TP32 (4.06 s) beats the 2× H100 80GB config (5.78 s)**. Trn2's win widens 
 (fp8-KV cache-hits) — see the sibling
 [`../vllm-neuron-4k_16k_32k_64_PublicVLLM`](../vllm-neuron-4k_16k_32k_64_PublicVLLM). This folder is
 the honest cold floor; TP8/TP16's real value is throughput / $-per-token and replica density, not cold TTFT.
-
-## Why this is the honest cold number (vs the APC sibling)
-
-| | sibling folder (APC) | **this folder (no-APC)** |
-|---|---|---|
-| prefix caching (APC) | **on** | **off** |
-| KV cache | fp8_e4m3 (≥16k) | **bf16** |
-| prefill | segmented seg=512 | **single-shot ≤16k**, segmented + SWA-windowed >16k |
-| workload | shared prefix + short query → **cache hit** | **unique random prompt every request → cold** |
-| what it measures | best-case repeated-context (RAG) TTFT | **true cold-prefill TTFT** |
-
-The sibling's headline is a *cache-hit* number (shared prefix warmed once, then reused — only the short
-unique tail is prefilled). Real and useful for RAG, but **not comparable to a cold request**. This
-folder removes that advantage entirely. The two are complementary, not competing.
 
 ## Just want to run it? → [LAUNCH.md](./LAUNCH.md)
 
