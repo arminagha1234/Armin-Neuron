@@ -80,3 +80,18 @@ bash run_benchmark.sh                          # full sweep (single-shot ≤16k 
 ONLY=4k,8k,16k bash run_benchmark.sh           # single-shot pool only
 LEVELS=1,2,4 ONLY=32k,64k bash run_benchmark.sh # segmented pool only
 ```
+
+## UPDATE — SWA windowed-prior fix for >16k (VALIDATED, −33%)
+
+The 32k/64k numbers above are the full-span segmented baseline. A correctness-preserving
+optimization (`patches/patch_swa_window_prior_v2.py`) windows the SWA-layer prior gather (50 of 60
+layers only attend to the last 1024 keys). Measured on-device (same box, conc=1, bf16, no-APC):
+
+| input | full-span baseline | SWA-windowed (v2) | Δ | token parity |
+|---|---:|---:|:--:|:--:|
+| 32k TTFT | 3.03 s | **2.021 s** | **−33.3%** | ✅ byte-identical |
+| 64k TTFT | 6.053 s | **4.040 s** | **−33.3%** | ✅ byte-identical |
+
+Correctness proven 3 ways (CPU masking diff 2.4e-7, CPU gather diff 0.0, on-device 18k token
+parity). See `SWA_WINDOW_FINDING.md`. This supersedes the earlier "broken/reverted" writeup — that
+was a misdiagnosis (the masking is shift-invariant). Decode TPOT unchanged (~211ms; prefill-only fix).
