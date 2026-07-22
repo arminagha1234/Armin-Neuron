@@ -78,7 +78,7 @@ def chart_conc1():
     ax.grid(True, axis="y", alpha=0.3, zorder=0)
     ax.legend(ncol=4, fontsize=9, loc="upper left")
     fig.tight_layout()
-    p = os.path.join(OUT, "ttft_tp_scaling_conc1.png"); fig.savefig(p, dpi=140); print("wrote", p)
+    p = os.path.join(OUT, "ttft_tp_scaling_conc1_lnc2.png"); fig.savefig(p, dpi=140); print("wrote", p)
 
 
 # ---- Chart 2: conc-sweep panels (4k/16k/32k/64k) vs H100 ----
@@ -102,7 +102,7 @@ def chart_sweep():
         ax.grid(True, which="major", alpha=0.3)
         ax.legend(fontsize=8.5, loc="upper left")
     fig.tight_layout(rect=[0, 0, 1, 0.94])
-    p = os.path.join(OUT, "ttft_tp_vs_h100.png"); fig.savefig(p, dpi=140); print("wrote", p)
+    p = os.path.join(OUT, "ttft_tp_vs_h100_lnc2.png"); fig.savefig(p, dpi=140); print("wrote", p)
 
 
 if __name__ == "__main__":

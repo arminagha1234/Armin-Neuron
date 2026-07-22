@@ -69,12 +69,18 @@ Everything above is **TP=32** — the lowest-TTFT config. On trn2.48xlarge with 
 core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, **TP=16 = 4 chips**,
 **TP=8 = 2 chips**. Here is how cold TTFT scales as you shard across fewer chips, vs an H100 baseline.
 
-![TP scaling at conc=1](./assets/ttft_tp_scaling_conc1.png)
+### Cold TTFT vs concurrency — TP32 / TP16 / TP8 vs H100
 
-![TP vs H100 concurrency sweep](./assets/ttft_tp_vs_h100.png)
+![Gemma4-31B cold TTFT vs concurrency: TP32 (8 chips) / TP16 (4 chips) / TP8 (2 chips) vs H100](./assets/ttft_tp_vs_h100_lnc2.png)
+
+*LNC=2 → **TP32 = 8 chips**, **TP16 = 4 chips**, **TP8 = 2 chips** (4 logical cores/chip, 24 GB/core). TP8 is omitted at 16k/32k/64k because it HBM-OOMs there.*
+
+### conc=1 scaling by input size
+
+![Gemma4-31B cold TTFT by input size — TP scaling at conc=1: TP32 (8 chips) / TP16 (4 chips) / TP8 (2 chips) vs H100](./assets/ttft_tp_scaling_conc1_lnc2.png)
 
 **conc=1 TTFT (s):**
-| size | TP32 | TP16 | TP8 | H100 |
+| size | TP32 (8 chips) | TP16 (4 chips) | TP8 (2 chips) | H100 |
 |---|---:|---:|---:|---:|
 | 4k | **0.224** | 0.307 | 0.572 | 0.121 |
 | 8k | **0.390** | 0.557 | 1.126 | — |
