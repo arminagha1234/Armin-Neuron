@@ -85,10 +85,11 @@ core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, 
 | 4k | **0.224** | 0.307 | 0.572 | 0.121 | 0.240 |
 | 8k | **0.390** | 0.557 | 1.126 | — | 0.461 |
 | 16k | **0.754** | 1.515 † | **OOM** | 0.449 | 1.008 |
-| 32k | **2.046** | 3.01 | **OOM** | 0.992 | — |
-| 64k | **4.064** | 6.056 | **OOM** | 2.249 | — |
+| 32k | **2.046** | 3.01 | **OOM** | 0.992 | 2.377 ‡ |
+| 64k | **4.064** | 6.056 | **OOM** | 2.249 | **OOM** |
 
 † TP16 16k measured via the segmented path (single-shot 16k needs prompt headroom under the 16384 cap).
+‡ `H100 ×2 80GB (TP2)` 32k measured with 500 output tokens (4k/8k/16k use 40); TTFT is first-token latency, so output length does not affect it. At **64k the 2× H100 80GB config OOMs** (can't hold the KV cache), so it has no 32k+ entry beyond this.
 
 **What the TP sweep shows:**
 - **TP32 has the lowest TTFT** — it shards the prefill matmuls across the most cores, so first-token
@@ -103,8 +104,9 @@ core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, 
 
 **Honest note on the H100 comparison:** these are Trn2's **cold / bf16 / no-APC worst-case** numbers,
 the large **`H100 ×8 (TP8)`** (8 GPUs) shows lower TTFT here — ~1.5–2× at conc=1. **But against a
-comparable-scale `H100 ×2 80GB (TP2)` (2 GPUs), Trn2 TP32 (8 chips) is actually *faster* at 4k/8k/16k
-even cold** (0.224/0.390/0.754 vs 0.240/0.461/1.008 s). And Trn2's win widens in the **APC / RAG config**
+comparable-scale `H100 ×2 80GB (TP2)` (2 GPUs), Trn2 TP32 (8 chips) is actually *faster* at 4k/8k/16k/32k
+even cold** (0.224/0.390/0.754/2.046 vs 0.240/0.461/1.008/2.377 s) — and at **64k the 2× H100 80GB config
+OOMs entirely** while Trn2 TP32 still serves it at 4.06 s. Trn2's win widens further in the **APC / RAG config**
 (fp8-KV cache-hits) — see the sibling
 [`../vllm-neuron-4k_16k_32k_64_PublicVLLM`](../vllm-neuron-4k_16k_32k_64_PublicVLLM). This folder is
 the honest cold floor; TP8/TP16's real value is throughput / $-per-token and replica density, not cold TTFT.

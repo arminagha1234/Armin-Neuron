@@ -14,7 +14,8 @@ Topology: LNC=2 (logical-neuroncore-config=2) -> 4 logical cores/chip, 96GB/chip
 GPU baselines (two H100 configs):
 - "H100 ×8 (TP8)": 8× H100 at TP=8 — a large 8-GPU config; fastest here. No 8k point.
 - "H100 2×80GB (TP2)": 2× H100 80GB, TP=2 — a comparable-scale GPU config. Trn2 TP32
-  BEATS it at 4k/8k/16k (0.224/0.390/0.754 vs 0.240/0.461/1.008). No 32k/64k points.
+  BEATS it at 4k/8k/16k/32k (0.224/0.390/0.754/2.046 vs 0.240/0.461/1.008/2.377).
+  No 64k point (2× H100 80GB OOMs at 64k KV).
 """
 import os
 import matplotlib
@@ -36,9 +37,10 @@ TP8  = {"4k": [0.572,0.855,2.56,6.201,14.155,29.574], "8k": [1.126,1.684,3.853,8
 H100 = {"4k": [0.121,0.164,0.301,0.468,0.806,1.494], "8k": None,
         "16k": [0.449,0.627,1.009,1.727,3.207,6.156], "32k": [0.992,1.372,2.201,3.827,7.094,13.597],
         "64k": [2.249,3.192,5.139,9.005,16.773,32.258]}
-# 2x H100 80GB, TP=2 (comparable-scale GPU config). 4k/8k/16k only.
+# 2x H100 80GB, TP=2 (comparable-scale GPU config). 4k/8k/16k out=40, 32k out=500.
+# 64k = OOM (2x H100 80GB can't hold 64k KV).
 H100_TP2 = {"4k": [0.240,0.359,0.637,1.139,2.075,3.964], "8k": [0.461,0.694,1.197,2.157,4.100,8.021],
-            "16k": [1.008,1.510,2.569,4.651,8.812,16.894], "32k": None, "64k": None}
+            "16k": [1.008,1.510,2.569,4.651,8.812,16.894], "32k": [2.377,3.565,5.927,10.714,20.192,42.746], "64k": None}
 
 # order = bar order left->right; H100 configs last
 SERIES = [("TP32", TP32), ("TP16", TP16), ("TP8", TP8), ("H100", H100), ("H100_TP2", H100_TP2)]
@@ -77,7 +79,7 @@ def chart_conc1():
     ax.set_ylabel("TTFT (s, log)"); ax.set_xlabel("input size")
     ax.set_title("Gemma4-31B cold TTFT — TP scaling vs H100 (conc=1)\n"
                  "trn2.48xl LNC=2 (4 cores/chip): TP32=8 chips · TP16=4 · TP8=2 · bf16, no-APC · "
-                 "Trn2 TP32 beats H100 ×2 (TP2) at 4k/8k/16k",
+                 "Trn2 TP32 beats H100 ×2 (TP2) through 32k",
                  fontsize=10.5, fontweight="bold")
     ax.grid(True, axis="y", alpha=0.3, zorder=0)
     ax.legend(ncol=5, fontsize=8, loc="upper left")
