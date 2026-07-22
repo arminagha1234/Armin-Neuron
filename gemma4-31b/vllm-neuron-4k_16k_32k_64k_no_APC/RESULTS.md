@@ -6,7 +6,7 @@ Measured on **trn2.48xlarge, TP=32**, **public GA vLLM-Neuron 0.21** (SDK 2.31),
 **cold** prefill numbers. **APC OFF, KV cache bf16 (no FP8).** TTFT is warm-NEFF (cold compile dropped).
 
 Model file has the best-TTFT patches applied (`patches/`: fused qkv_proj + o_proj NKI kernel;
-segmented-NKI for >16k). Decode = sdpa.
+segmented-NKI for >16k; **SWA windowed-prior v2 for 32k/64k**). Decode = sdpa.
 
 ## Config (set automatically by `run_benchmark.sh`)
 
@@ -18,16 +18,21 @@ segmented-NKI for >16k). Decode = sdpa.
 Single-shot is the fast path but caps at 16k (above it, neuronx-cc stalls on the global-attention
 graph — tested). 32k/64k therefore use segmented prefill (seg=8192 = fewest chunks).
 
-## TTFT — Time To First Token (seconds, mean) — COLD
+## TTFT — Time To First Token (seconds, mean) — COLD (best config)
 
-| concurrency | 4k | 8k | 16k | 32k | 64k |
+| concurrency | 4k | 8k | 16k | 32k † | 64k † |
 |---:|---:|---:|---:|---:|---:|
-| 1  | **0.224** | **0.390** | **0.754** | **3.056** | **6.089** |
-| 2  | 0.331 | 0.585 | 1.127 | 4.589 | 9.151 |
-| 4  | 0.605 | 0.969 | 1.944 | 8.335 | 15.938 |
+| 1  | **0.224** | **0.390** | **0.754** | **2.046** | **4.064** |
+| 2  | 0.331 | 0.585 | 1.127 | 3.051 | 6.071 |
+| 4  | 0.605 | 0.969 | 1.944 | 7.132 | 11.991 |
 | 8  | 1.878 | 2.606 | 4.215 | — | — |
 | 16 | 4.983 | 6.406 | 9.429 | — | — |
 | 32 | 11.459 | 14.176 | 19.901 | — | — |
+
+† 32k/64k use the **validated SWA windowed-prior fix** (`patches/patch_swa_window_prior_v2.py`), the
+best long-context config. Full-span (pre-fix) baseline for reference: 32k 3.056 / 4.589 / 8.335,
+64k 6.089 / 9.151 / 15.938 (conc 1 / 2 / 4) — i.e. the windowed fix is **−33%** at conc 1–2. Parity
+validated (byte-identical output); see `SWA_WINDOW_FINDING.md`.
 
 (TTFT p99 at conc≥8 is ~2× the mean — queuing spread once offered load exceeds the KV ceiling.)
 32k/64k conc≥8 not run: bf16 KV capacity is exhausted well before conc=8 at long context, so requests
@@ -51,9 +56,10 @@ is a throughput/$-per-token factor, not part of TTFT.
 ## Reading the numbers
 - **Single-shot ≤16k is the win:** 4k 0.22 s, 8k 0.39 s, 16k 0.75 s at conc=1 — all under a 500 ms SLA
   cold. It scales ~linearly in input length (0.22 → 0.39 → 0.75 for 4k → 8k → 16k).
-- **The jump at 32k** (0.75 s → 3.06 s) is the single-shot→segmented transition, not a smooth curve —
-  single-shot physically can't compile >16k, and segmented pays per-chunk prior-KV gather.
-- **Segmented scales linearly** in the 32k→64k range (3.06 → 6.09 ≈ 2× for 2× tokens).
+- **The jump at 32k** (0.75 s → 2.05 s) is the single-shot→segmented transition, not a smooth curve —
+  single-shot physically can't compile >16k, and segmented pays per-chunk prior-KV gather (cut −33%
+  by the SWA windowed-prior fix; full-span would be 3.06 s).
+- **Segmented scales linearly** in the 32k→64k range (2.05 → 4.06 ≈ 2× for 2× tokens, windowed).
 - **TTFT climbs steeply with concurrency** once offered load exceeds the bf16 KV concurrency ceiling
   (requests queue). The knee comes earlier for longer contexts (64k saturates below conc=8; 4k scales
   to ~conc=8 before the climb). FP8-KV would raise this ceiling but is intentionally out of scope (bf16-only).
@@ -68,7 +74,7 @@ numbers are higher and honest:
 | conc=1 TTFT | 4k | 16k | 32k | 64k |
 |---|---|---|---|---|
 | sibling (APC cache-hit, FP8) | 0.41 | 0.46 | 0.50 | 0.68 |
-| **this folder (cold, no APC, bf16)** | **0.22** | **0.75** | **3.06** | **6.09** |
+| **this folder (cold, no APC, bf16)** | **0.22** | **0.75** | **2.05** | **4.06** |
 
 Note 4k is actually *faster* here (0.22 vs 0.41) because single-shot bf16 beats the APC folder's
 seg=512 config at short context — APC's win only shows up at longer context on cache hits. The two
@@ -81,17 +87,21 @@ ONLY=4k,8k,16k bash run_benchmark.sh           # single-shot pool only
 LEVELS=1,2,4 ONLY=32k,64k bash run_benchmark.sh # segmented pool only
 ```
 
-## UPDATE — SWA windowed-prior fix for >16k (VALIDATED, −33%)
+## SWA windowed-prior fix — full-span vs windowed (the −33% detail)
 
-The 32k/64k numbers above are the full-span segmented baseline. A correctness-preserving
-optimization (`patches/patch_swa_window_prior_v2.py`) windows the SWA-layer prior gather (50 of 60
-layers only attend to the last 1024 keys). Measured on-device (same box, conc=1, bf16, no-APC):
+The main TTFT table above already uses the windowed best numbers for 32k/64k. Here is the full-span
+baseline vs windowed comparison across concurrency. The correctness-preserving optimization
+(`patches/patch_swa_window_prior_v2.py`) windows the SWA-layer prior gather (50 of 60 layers only
+attend to the last 1024 keys). Measured on-device (same box, bf16, no-APC):
 
-| input | full-span baseline | SWA-windowed (v2) | Δ | token parity |
-|---|---:|---:|:--:|:--:|
-| 32k TTFT | 3.03 s | **2.021 s** | **−33.3%** | ✅ byte-identical |
-| 64k TTFT | 6.053 s | **4.040 s** | **−33.3%** | ✅ byte-identical |
+| conc | 32k full-span | 32k windowed | Δ | 64k full-span | 64k windowed | Δ |
+|---:|---:|---:|:--:|---:|---:|:--:|
+| 1 | 3.056 | **2.046** | −33% | 6.089 | **4.064** | −33% |
+| 2 | 4.589 | **3.051** | −34% | 9.151 | **6.071** | −34% |
+| 4 | 8.335 | **7.132** | −14% | 15.938 | **11.991** | −25% |
 
-Correctness proven 3 ways (CPU masking diff 2.4e-7, CPU gather diff 0.0, on-device 18k token
-parity). See `SWA_WINDOW_FINDING.md`. This supersedes the earlier "broken/reverted" writeup — that
-was a misdiagnosis (the masking is shift-invariant). Decode TPOT unchanged (~211ms; prefill-only fix).
+Correctness proven 3 ways (CPU masking diff 2.4e-7, CPU gather diff 0.0, on-device 18k token parity —
+byte-identical greedy output). See `SWA_WINDOW_FINDING.md`. This supersedes the earlier
+"broken/reverted" writeup — that was a misdiagnosis (the kernel masking is shift-invariant). Decode
+TPOT unchanged (prefill-only fix). The win is largest at low/mid concurrency; at conc=4 for long
+context, bf16 KV capacity starts to queue, so the fixed savings are a smaller fraction of the total.
