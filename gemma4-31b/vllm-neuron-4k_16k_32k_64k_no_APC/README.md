@@ -64,8 +64,10 @@ for concurrent long-context. 32k/64k are the **SWA-windowed** best numbers.)
 
 ## TP scaling — TP32 vs TP16 vs TP8 vs H100 (cold TTFT)
 
-Everything above is **TP=32** (all 16 chips / 32 cores) — the lowest-TTFT config. Here is how cold
-TTFT scales as you shard across fewer cores (TP16 = 8 chips, TP8 = 4 chips), against an H100 baseline.
+Everything above is **TP=32** — the lowest-TTFT config. On trn2.48xlarge with **LNC=2**
+(`logical-neuroncore-config: 2`): 16 chips × 4 logical cores = 64 cores, 96 GB/chip = **24 GB per
+core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, **TP=16 = 4 chips**,
+**TP=8 = 2 chips**. Here is how cold TTFT scales as you shard across fewer chips, vs an H100 baseline.
 
 ![TP scaling at conc=1](./assets/ttft_tp_scaling_conc1.png)
 
@@ -85,10 +87,10 @@ TTFT scales as you shard across fewer cores (TP16 = 8 chips, TP8 = 4 chips), aga
 **What the TP sweep shows:**
 - **TP32 has the lowest TTFT** — it shards the prefill matmuls across the most cores, so first-token
   latency is best. TP16 is ~40–50% higher; TP8 is ~2.5–3× higher.
-- **TP8 cannot serve long context in bf16.** The 64k-capacity config **HBM-OOMs** at 8 cores
-  (`NCC_EOOM002`: peak **27.45 GB > 24 GB** per-core Trn2 limit). TP8 is a **short-context /
-  high-density** config (4× replicas per box, ~3–4× faster decode) — not a long-context or
-  lowest-TTFT one.
+- **TP8 cannot serve long context in bf16.** The 64k-capacity config **HBM-OOMs** on its 8 cores /
+  **2 chips** (`NCC_EOOM002`: peak **27.45 GB > 24 GB** per-core Trn2 limit). TP8 is a
+  **short-context / high-density** config (2 chips ⇒ up to **8 replicas per box**, ~3–4× faster
+  decode) — not a long-context or lowest-TTFT one.
 - **OOM reconciliation:** a "seg=8192 OOMs at ~30 GB > 24 GB" observation is a **low-TP** OOM, *not*
   TP32. At TP32 the same seg=8192 config shards 32 ways and fits (that's the measured 2.05 s at 32k).
   Fewer cores → more per-core HBM → OOM. Same config, different TP → different outcome.

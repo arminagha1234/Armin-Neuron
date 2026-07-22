@@ -9,7 +9,9 @@ Trn2 = trn2.48xlarge, bf16 KV, APC OFF, unique random prompt per request (cold),
 - <=8k: single-shot prefill (all TP degrees).
 - 16k: TP32 single-shot; TP16 via segmented (single-shot 16k needs headroom).
 - 32k/64k: segmented + SWA windowed-prior fix.
-- TP8: 4k/8k only — the 66560-capacity (long-context) config HBM-OOMs at 8 cores
+Topology: trn2.48xl with LNC=2 (logical-neuroncore-config=2) -> 4 logical cores/chip, 96GB/chip
+= 24GB/core. TP maps 1 rank -> 1 core, so TP32=8 chips, TP16=4 chips, TP8=2 chips.
+- TP8 (2 chips): 4k/8k only — the 66560-capacity (long-context) config HBM-OOMs at 8 cores
   (NCC_EOOM002: peak 27.45GB > 24GB per-core Trn2 limit). TP8 = short-ctx/density.
 H100 baseline: vendor-typical vLLM serving (no 8k point measured).
 """
@@ -35,6 +37,8 @@ H100 = {"4k": [0.121,0.164,0.301,0.468,0.806,1.494], "8k": None,
         "64k": [2.249,3.192,5.139,9.005,16.773,32.258]}
 
 COLORS = {"TP32": "#ff6a00", "TP16": "#d1691f", "TP8": "#8a4b1f", "H100": "#1f77b4"}
+# LNC=2 on trn2.48xlarge: 4 logical cores/chip, so TP32=8 chips, TP16=4 chips, TP8=2 chips.
+LABELS = {"TP32": "TP32 (8 chips)", "TP16": "TP16 (4 chips)", "TP8": "TP8 (2 chips)", "H100": "H100 (GPU)"}
 SERIES = [("TP32", TP32), ("TP16", TP16), ("TP8", TP8), ("H100", H100)]
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 os.makedirs(OUT, exist_ok=True)
@@ -54,7 +58,7 @@ def chart_conc1():
         vals = [c1(d, s) for s in SIZES]
         xs = [x[i] + offs[name] * w for i in range(len(SIZES)) if vals[i] is not None]
         ys = [v for v in vals if v is not None]
-        bars = ax.bar(xs, ys, w, label=name, color=COLORS[name], zorder=3)
+        bars = ax.bar(xs, ys, w, label=LABELS[name], color=COLORS[name], zorder=3)
         for b, y in zip(bars, ys):
             ax.annotate(f"{y:.2f}", (b.get_x() + b.get_width() / 2, y), textcoords="offset points",
                         xytext=(0, 2), ha="center", fontsize=7, rotation=90)
@@ -69,8 +73,8 @@ def chart_conc1():
     ax.set_xticks(x); ax.set_xticklabels(SIZES)
     ax.set_ylabel("TTFT (s, log)"); ax.set_xlabel("input size")
     ax.set_title("Gemma4-31B cold TTFT — TP scaling vs H100 (conc=1)\n"
-                 "Trn2 bf16, no-APC · TP32 lowest TTFT · TP8 long-context OOMs (24GB/core)",
-                 fontsize=12, fontweight="bold")
+                 "trn2.48xl LNC=2 (4 cores/chip): TP32=8 chips · TP16=4 · TP8=2 · bf16, no-APC · TP8 long-ctx OOMs (24GB/core)",
+                 fontsize=10.5, fontweight="bold")
     ax.grid(True, axis="y", alpha=0.3, zorder=0)
     ax.legend(ncol=4, fontsize=9, loc="upper left")
     fig.tight_layout()
@@ -81,16 +85,16 @@ def chart_conc1():
 def chart_sweep():
     panels = ["4k", "16k", "32k", "64k"]
     fig, axes = plt.subplots(2, 2, figsize=(13, 9))
-    fig.suptitle("Gemma4-31B cold TTFT vs concurrency — Trn2 TP32/TP16/TP8 vs H100 (bf16, no-APC)\n"
-                 "lower is better · TP8 omitted at 16k/32k/64k (HBM OOM at 8 cores)",
-                 fontsize=13, fontweight="bold")
+    fig.suptitle("Gemma4-31B cold TTFT vs concurrency — Trn2 TP32/TP16/TP8 vs H100 (bf16, no-APC, LNC=2)\n"
+                 "TP32=8 chips · TP16=4 chips · TP8=2 chips · TP8 omitted at 16k/32k/64k (HBM OOM, 24GB/core)",
+                 fontsize=12, fontweight="bold")
     for ax, s in zip(axes.flat, panels):
         for name, d in SERIES:
             v = d.get(s)
             if not v:
                 continue
             conc = CONC if len(v) == 6 else CL
-            ax.plot(conc, [x * 1000 for x in v], "-o", color=COLORS[name], lw=2, ms=5, label=name, zorder=3)
+            ax.plot(conc, [x * 1000 for x in v], "-o", color=COLORS[name], lw=2, ms=5, label=LABELS[name], zorder=3)
         ax.set_xscale("log", base=2); ax.set_yscale("log")
         ax.set_xticks(CONC); ax.set_xticklabels(CONC)
         ax.set_title(f"{s} input", fontsize=12, fontweight="bold")
