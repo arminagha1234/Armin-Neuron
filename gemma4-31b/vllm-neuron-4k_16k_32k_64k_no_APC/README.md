@@ -62,6 +62,43 @@ Full tables (TTFT / TPOT / E2E, all concurrency levels): **[RESULTS.md](./RESULT
 levels are head-of-line-queue-bound, not a meaningful single-request number. Use multiple replicas
 for concurrent long-context. 32k/64k are the **SWA-windowed** best numbers.)
 
+## TP scaling — TP32 vs TP16 vs TP8 vs H100 (cold TTFT)
+
+Everything above is **TP=32** (all 16 chips / 32 cores) — the lowest-TTFT config. Here is how cold
+TTFT scales as you shard across fewer cores (TP16 = 8 chips, TP8 = 4 chips), against an H100 baseline.
+
+![TP scaling at conc=1](./assets/ttft_tp_scaling_conc1.png)
+
+![TP vs H100 concurrency sweep](./assets/ttft_tp_vs_h100.png)
+
+**conc=1 TTFT (s):**
+| size | TP32 | TP16 | TP8 | H100 |
+|---|---:|---:|---:|---:|
+| 4k | **0.224** | 0.307 | 0.572 | 0.121 |
+| 8k | **0.390** | 0.557 | 1.126 | — |
+| 16k | **0.754** | 1.515 † | **OOM** | 0.449 |
+| 32k | **2.046** | 3.01 | **OOM** | 0.992 |
+| 64k | **4.064** | 6.056 | **OOM** | 2.249 |
+
+† TP16 16k measured via the segmented path (single-shot 16k needs prompt headroom under the 16384 cap).
+
+**What the TP sweep shows:**
+- **TP32 has the lowest TTFT** — it shards the prefill matmuls across the most cores, so first-token
+  latency is best. TP16 is ~40–50% higher; TP8 is ~2.5–3× higher.
+- **TP8 cannot serve long context in bf16.** The 64k-capacity config **HBM-OOMs** at 8 cores
+  (`NCC_EOOM002`: peak **27.45 GB > 24 GB** per-core Trn2 limit). TP8 is a **short-context /
+  high-density** config (4× replicas per box, ~3–4× faster decode) — not a long-context or
+  lowest-TTFT one.
+- **OOM reconciliation:** a "seg=8192 OOMs at ~30 GB > 24 GB" observation is a **low-TP** OOM, *not*
+  TP32. At TP32 the same seg=8192 config shards 32 ways and fits (that's the measured 2.05 s at 32k).
+  Fewer cores → more per-core HBM → OOM. Same config, different TP → different outcome.
+
+**Honest note on the H100 comparison:** these are Trn2's **cold / bf16 / no-APC worst-case** numbers,
+so H100 (vendor-typical serving) shows lower TTFT here — ~1.5–2× at conc=1. Trn2's *win* over H100
+shows up in the **APC / RAG config** (fp8-KV cache-hits) — see the sibling
+[`../vllm-neuron-4k_16k_32k_64_PublicVLLM`](../vllm-neuron-4k_16k_32k_64_PublicVLLM). This folder is
+the honest cold floor; TP8/TP16's real value is throughput / $-per-token and replica density, not cold TTFT.
+
 ## Why this is the honest cold number (vs the APC sibling)
 
 | | sibling folder (APC) | **this folder (no-APC)** |
@@ -123,7 +160,7 @@ single-shot cap). When `mnbt < max-model-len` you get **segmented** prefill (chu
 
 ## Files
 - `README.md` — this file (best numbers + charts)
-- `make_perf_chart.py` — regenerates `assets/*.png` from the measured numbers
+- `make_perf_chart.py` / `make_perf_chart_tp.py` — regenerate the `assets/*.png` (best-numbers charts + TP32/TP16/TP8-vs-H100 scaling charts) from the measured numbers
 - `assets/` — the TTFT charts
 - `RESULTS.md` — full measured TTFT / TPOT / E2E tables (no-APC, cold)
 - `SWA_WINDOW_FINDING.md` — the validated windowed-prior fix (−33%, parity-proven)
