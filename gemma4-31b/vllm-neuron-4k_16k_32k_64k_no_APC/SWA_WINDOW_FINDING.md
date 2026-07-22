@@ -35,11 +35,28 @@ i.e. **outside** the sliding window → **all prior masked** → SWA layers lose
 degenerate output. The "prior sits immediately before the current chunk (relative)" assumption is
 wrong for this kernel.
 
-## What a correct fix needs
-A **kernel-side** change: add a `prior_start_offset` argument to `NF.flash_attention` so the
-sliding-window mask on the prior uses `(offset + i)` as the key's absolute position. Then the caller
-can pass a compact window slice with its true offset. That's an nkilib/functional change, not a
-model.py-only patch — escalate to the Neuron kernel owners.
+## What a correct fix needs — two viable paths
+The naive `k_prior` compaction fails because the kernel masks prior keys by absolute index. Two
+correct options:
+
+1. **Kernel change (cleanest):** add a `prior_start_offset` arg to `NF.flash_attention` so the
+   sliding-window mask on the prior uses `(offset + i)` as the key's absolute position. Then the
+   caller passes a compact window slice + its true offset. nkilib/functional change — escalate to
+   the Neuron kernel owners.
+
+2. **model.py-only (no kernel change), via square attention over the window:** for SWA layers, drop
+   `k_prior` entirely and instead attend the current chunk over a `[window_prior ++ current]`
+   **contiguous** k/v with the queries also extended by `window` dummy rows (so `q_len == k_len` and
+   the standard causal+sliding_window mask applies with correct RELATIVE positions); slice off the
+   first `window` output rows. Gather only the trailing `w_blocks` prior blocks (static shape,
+   dynamic offset — the same trace-safe gather this patch already does). Cost: SWA attention becomes
+   `(window+chunk)²` instead of `chunk × (full_prior+chunk)` — a big net win at long context because
+   it removes the full-prior gather/scan (window≈1056 ≪ prior at 32k/64k), at the price of ~1.2–1.3×
+   the current-chunk attention and `window` wasted query rows. Needs implementation + the same
+   token-parity gate. This is the recommended model.py-only route; it was NOT implemented here
+   (out of the ≤8k customer scope, and it's a non-trivial restructure warranting careful validation).
+
+Either path keeps the global (full-causal) layers on the full prior — only the 50 SWA layers change.
 
 **Caution for anyone quoting "just slice k_prior caller-side":** validate **token parity on a
 multi-chunk prompt** first. The naive caller-side slice is ~33% faster but silently wrong.
