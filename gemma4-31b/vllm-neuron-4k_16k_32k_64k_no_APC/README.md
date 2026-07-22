@@ -80,13 +80,13 @@ core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, 
 ![Gemma4-31B cold TTFT by input size — TP scaling at conc=1: TP32 (8 chips) / TP16 (4 chips) / TP8 (2 chips) vs H100](./assets/ttft_tp_scaling_conc1_lnc2.png)
 
 **conc=1 TTFT (s):**
-| size | TP32 (8 chips) | TP16 (4 chips) | TP8 (2 chips) | H100 |
-|---|---:|---:|---:|---:|
-| 4k | **0.224** | 0.307 | 0.572 | 0.121 |
-| 8k | **0.390** | 0.557 | 1.126 | — |
-| 16k | **0.754** | 1.515 † | **OOM** | 0.449 |
-| 32k | **2.046** | 3.01 | **OOM** | 0.992 |
-| 64k | **4.064** | 6.056 | **OOM** | 2.249 |
+| size | TP32 (8 chips) | TP16 (4 chips) | TP8 (2 chips) | H100 (ref) | **H100 ×2 80GB (TP2)** |
+|---|---:|---:|---:|---:|---:|
+| 4k | **0.224** | 0.307 | 0.572 | 0.121 | 0.240 |
+| 8k | **0.390** | 0.557 | 1.126 | — | 0.461 |
+| 16k | **0.754** | 1.515 † | **OOM** | 0.449 | 1.008 |
+| 32k | **2.046** | 3.01 | **OOM** | 0.992 | — |
+| 64k | **4.064** | 6.056 | **OOM** | 2.249 | — |
 
 † TP16 16k measured via the segmented path (single-shot 16k needs prompt headroom under the 16384 cap).
 
@@ -102,8 +102,10 @@ core**. TP maps 1 rank → 1 logical core (4 per chip), so **TP=32 = 8 chips**, 
   Fewer cores → more per-core HBM → OOM. Same config, different TP → different outcome.
 
 **Honest note on the H100 comparison:** these are Trn2's **cold / bf16 / no-APC worst-case** numbers,
-so H100 (vendor-typical serving) shows lower TTFT here — ~1.5–2× at conc=1. Trn2's *win* over H100
-shows up in the **APC / RAG config** (fp8-KV cache-hits) — see the sibling
+so the vendor-typical `H100 (ref)` shows lower TTFT here — ~1.5–2× at conc=1. **But against a
+comparable-scale `H100 ×2 80GB (TP2)`, Trn2 TP32 is actually *faster* at 4k/8k/16k even cold**
+(0.224/0.390/0.754 vs 0.240/0.461/1.008 s). And Trn2's win widens in the **APC / RAG config**
+(fp8-KV cache-hits) — see the sibling
 [`../vllm-neuron-4k_16k_32k_64_PublicVLLM`](../vllm-neuron-4k_16k_32k_64_PublicVLLM). This folder is
 the honest cold floor; TP8/TP16's real value is throughput / $-per-token and replica density, not cold TTFT.
 
