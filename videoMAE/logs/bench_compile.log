@@ -1,0 +1,68 @@
+### bf16 batch 1 (torch.compile) ###
+[W723 20:35:52.239362684 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+# VideoMAE v2 pretraining throughput  (device=neuron, mode=torch.compile(neuron), warmup=6, iters=15)
+ dtype  batch   step_ms  videos/s  peak_GB
+  bf16      1     114.0      8.77     1.83
+BENCH_DONE
+### bf16 batch 2 (torch.compile) ###
+[W723 20:36:19.804166412 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+# VideoMAE v2 pretraining throughput  (device=neuron, mode=torch.compile(neuron), warmup=6, iters=15)
+ dtype  batch   step_ms  videos/s  peak_GB
+  bf16      2     191.8     10.43     2.61
+BENCH_DONE
+### bf16 batch 4 (torch.compile) ###
+[W723 20:41:27.222472634 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+# VideoMAE v2 pretraining throughput  (device=neuron, mode=torch.compile(neuron), warmup=6, iters=15)
+ dtype  batch   step_ms  videos/s  peak_GB
+  bf16      4     316.7     12.63     4.05
+BENCH_DONE
+### bf16 batch 8 (torch.compile) ###
+[W723 20:49:19.814368566 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+# VideoMAE v2 pretraining throughput  (device=neuron, mode=torch.compile(neuron), warmup=6, iters=15)
+ dtype  batch   step_ms  videos/s  peak_GB
+  bf16      8     513.8     15.57     7.09
+BENCH_DONE
+### fp32 batch 4 (torch.compile) ###
+[W723 20:59:18.741382952 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+# VideoMAE v2 pretraining throughput  (device=neuron, mode=torch.compile(neuron), warmup=6, iters=15)
+ dtype  batch   step_ms  videos/s  peak_GB
+  fp32      4     325.5     12.29     8.09
+BENCH_DONE
+### fp32 batch 8 (torch.compile) ###
+[W723 21:07:02.879822431 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())

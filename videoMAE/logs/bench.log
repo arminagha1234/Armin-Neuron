@@ -1,0 +1,22 @@
+[W723 19:53:29.401014843 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+# VideoMAE v2 pretraining throughput  (device=neuron, warmup=6, iters=15)
+ dtype  batch   step_ms  videos/s  peak_GB
+  fp32      1     220.3      4.54     2.81
+  fp32      2     329.7      6.07     3.83
+  fp32      4     541.4      7.39     6.07
+  fp32      8    1127.6      7.09    10.13
+/home/ubuntu/workspace/torch_neuron_eager/torch_neuronx/python_ops/nki_kernels/foreach_elementwise.py:380: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  vt = torch.tensor(v, device=s.device, dtype=compute_dtype).reshape(1, 1)
+/home/ubuntu/workspace/native_venv/lib/python3.12/site-packages/torch/fx/experimental/proxy_tensor.py:1654: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  return func(*args, **kwargs)
+  bf16      1     192.1      5.21     1.40
+  bf16      2     302.8      6.61     1.98
+  bf16      4     460.1      8.69     3.04
+  bf16      8     800.0     10.00     5.28
+BENCH_DONE

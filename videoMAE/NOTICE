@@ -1,0 +1,16 @@
+VideoMAE v2 on AWS Trainium2 (native PyTorch) example
+Copyright (c) 2026, contributors.
+Licensed under the Apache License, Version 2.0.
+
+This example vendors and adapts model code from:
+
+  OpenGVLab/VideoMAEv2  (https://github.com/OpenGVLab/VideoMAEv2)
+  and the HuggingFace checkpoint OpenGVLab/VideoMAEv2-Base
+  Paper: "VideoMAE V2: Scaling Video Masked Autoencoders with Dual Masking",
+         Wang et al., CVPR 2023.
+
+The VideoMAEv2-Base pretrained weights are distributed by OpenGVLab under
+CC-BY-NC-4.0 (non-commercial). Those weights are NOT redistributed here; they are
+downloaded at runtime from HuggingFace by src/download_vmae2.py. The vendored
+modeling code is based on BEiT / timm / DeiT / DINO codebases as noted in the
+upstream files.

@@ -1,0 +1,57 @@
+[W723 19:34:39.650825121 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+/home/ubuntu/workspace/torch_neuron_eager/torch_neuronx/python_ops/nki_kernels/foreach_elementwise.py:380: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  vt = torch.tensor(v, device=s.device, dtype=compute_dtype).reshape(1, 1)
+/home/ubuntu/workspace/native_venv/lib/python3.12/site-packages/torch/fx/experimental/proxy_tensor.py:1654: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  return func(*args, **kwargs)
+model params: total 101.31M (encoder 86.23M + decoder 14.78M + heads)
+device=neuron  batch=2  mask_ratio=0.9
+step |  recon_loss | sec   (step 0 includes fwd+bwd NEFF compile)
+   0 |    1.327488 |  96.6
+   1 |    1.257464 |   0.5
+   2 |    1.180098 |   0.5
+   3 |    1.139787 |   0.5
+   4 |    1.112652 |   0.5
+   5 |    1.089610 |   0.5
+   6 |    1.072494 |   0.5
+   7 |    1.057318 |   0.5
+   8 |    1.045008 |   0.5
+   9 |    1.034912 |   0.5
+  10 |    1.026707 |   0.5
+  11 |    1.020286 |   0.5
+  12 |    1.015952 |   0.5
+  13 |    1.012476 |   0.5
+  14 |    1.010339 |   0.5
+  15 |    1.008634 |   0.5
+  16 |    1.007777 |   0.5
+  17 |    1.007342 |   0.5
+  18 |    1.006724 |   0.5
+  19 |    1.006467 |   0.5
+  20 |    1.006269 |   0.5
+  21 |    1.006034 |   0.5
+  22 |    1.005863 |   0.5
+  23 |    1.005645 |   0.5
+  24 |    1.005445 |   0.5
+  25 |    1.005016 |   0.5
+  26 |    1.004537 |   0.5
+  27 |    1.004150 |   0.5
+  28 |    1.003777 |   0.5
+  29 |    1.003436 |   0.5
+  30 |    1.002932 |   0.5
+  31 |    1.002520 |   0.5
+  32 |    1.002233 |   0.5
+  33 |    1.001830 |   0.5
+  34 |    1.001599 |   0.5
+  35 |    1.001430 |   0.5
+  36 |    1.001163 |   0.5
+  37 |    1.000917 |   0.5
+  38 |    1.000826 |   0.5
+  39 |    1.000795 |   0.5
+
+mean(first5)=1.203498  mean(last5)=1.001026  decreased=True
+PRETRAIN_OK
