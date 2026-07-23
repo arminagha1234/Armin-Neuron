@@ -1,78 +1,35 @@
-# SETUP — Step 1: vLLM-Neuron Beta container on Trainium2
+# SETUP — get a Trainium2 box ready (public image, no private access)
 
-This is the one-time environment setup. After this you'll have a running container with the Neuron
-runtime + vLLM-Neuron, ready to serve Gemma4-31B. Then continue with Step 2/3 in the main
-[README](./README.md).
+One-time environment prep before you run the benchmark. When you're done you'll have a **trn2.48xlarge**
+with the Neuron driver + Docker, ready for the 4-step run in **[LAUNCH.md](./LAUNCH.md)**.
 
-> **Note:** the base vLLM-Neuron Beta image officially supports **Llama3** and **GPT-OSS**. **Gemma4-31B
-> support is added by the [`serving_pkg/`](./serving_pkg/) in this repo** — no changes to the beta image
-> are needed; `launch_serve.sh` puts `serving_pkg/` on `PYTHONPATH` automatically.
+> **No private / beta access needed.** This benchmark runs on the **public** AWS Neuron vLLM image from
+> Neuron's public ECR gallery (`public.ecr.aws/neuron/pytorch-inference-vllm-neuronx`). Gemma4-31B support
+> is added by the [`serving_pkg/`](./serving_pkg/) in this repo — `launch_serve.sh` puts it on `PYTHONPATH`
+> automatically, so there's nothing to install into the image.
 
-## 1a. Prerequisites
-- A **Trainium2** instance — `trn2.48xlarge` (16 Neuron devices / 64 cores). Results in the README are
-  from this instance type, TP=32.
-- Docker installed, and AWS CLI configured.
-- **Access to the vLLM-Neuron Beta image.** It lives in an AWS ECR registry — **ask your AWS account
-  team** for the image URI and for ECR pull access on your account. Set it as `$BETA_IMAGE`:
-  ```bash
-  export BETA_IMAGE="<beta image URI from your AWS account team>"
-  ```
-  (We intentionally don't hardcode the registry here — your account team provides the correct URI.)
+## 1. Get a Trainium2 instance
+- **`trn2.48xlarge`** — 16 Neuron devices / 64 cores. The README numbers are from this instance type, TP=32.
+- trn2 is offered via **EC2 Capacity Blocks** (reserve capacity in advance).
+- Launch it from a recent **[Neuron Base DLAMI](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/)**
+  so **Docker and the Neuron driver come preinstalled and version-matched**. This avoids the #1 setup
+  failure: a host driver too old for the image's runtime, which makes Neuron device init fail with a
+  cryptic `NRT ... could not be initialized`.
 
-## 1b. Log in to ECR and pull the beta image
+## 2. Verify the driver is live
+SSH into the box and confirm the devices show up:
 ```bash
-# Registry host is the part of $BETA_IMAGE before the first '/'
-REGISTRY="${BETA_IMAGE%%/*}"
-REGION="$(echo "$REGISTRY" | sed -E 's/.*\.dkr\.ecr\.([^.]+)\.amazonaws\.com/\1/')"
-aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
-
-docker pull "$BETA_IMAGE"
+neuron-ls        # expect 16 devices / 64 cores. If this errors, your DLAMI/driver is too old — update it.
 ```
 
-## 1c. Install the Neuron driver (extract it from the image)
-The Neuron driver is a host kernel module; the matching `.deb` ships inside the image. Extract and install
-it on the host so the container can see the devices:
-```bash
-docker create --name neuron_tmp "$BETA_IMAGE"
-docker cp neuron_tmp:/opt/aws/neuron/driver ./neuron_driver
-docker rm neuron_tmp
-sudo dpkg -i ./neuron_driver/*.deb        # installs aws-neuronx-dkms (builds the kernel module)
-# verify the devices exist:
-ls /dev/neuron*                            # expect /dev/neuron0 .. /dev/neuron15
-```
+## 3. Get the Gemma4-31B weights
+Put them at `~/models/gemma-4-31b-it` (a directory containing the `*.safetensors` + tokenizer files). Two ways:
+- **Hugging Face** — `google/gemma-4-31b-it` is gated; accept the license, then download with a token.
+- **Provided out-of-band** — extract a tarball from your AWS/model contact into that path.
 
-## 1d. Run the container
-Mount all 16 Neuron devices, persist the HF + NEFF (compiled-kernel) caches so re-runs skip recompiles,
-and expose the OpenAI API port:
-```bash
-mkdir -p "$HOME/hf_cache" "$HOME/vllm_neff_cache"
+The exact download command **and the one-line tokenizer fix** are in the "Before you start" section of
+**[LAUNCH.md](./LAUNCH.md)** (don't skip the tokenizer fix — it prevents a known startup crash).
 
-docker run -d --name vllm_neuron \
-  --device /dev/neuron0  --device /dev/neuron1  --device /dev/neuron2  --device /dev/neuron3 \
-  --device /dev/neuron4  --device /dev/neuron5  --device /dev/neuron6  --device /dev/neuron7 \
-  --device /dev/neuron8  --device /dev/neuron9  --device /dev/neuron10 --device /dev/neuron11 \
-  --device /dev/neuron12 --device /dev/neuron13 --device /dev/neuron14 --device /dev/neuron15 \
-  -v "$HOME/hf_cache:/root/.cache/huggingface" \
-  -v "$HOME/vllm_neff_cache:/root/.cache/neuron" \
-  -e NEURON_SKIP_EFA_AFFINITY=1 \
-  -p 8000:8000 \
-  --ipc=host \
-  "$BETA_IMAGE" \
-  sleep infinity
-```
-- `--device /dev/neuron0..15` — the 16 Trainium2 devices.
-- `-v hf_cache` / `-v vllm_neff_cache` — persist model weights + compiled NEFFs across runs.
-- `NEURON_SKIP_EFA_AFFINITY=1` — required on single-node TP.
-- `-p 8000:8000` — the vLLM OpenAI-compatible API.
-- `--ipc=host` — shared memory for the multi-worker TP server.
-
-## 1e. Exec into the container
-```bash
-docker exec -it vllm_neuron bash
-```
-You're now inside the environment. Continue with **Step 2** in the [README](./README.md)
-(`git clone` this repo inside the container, then `bash run_benchmark.sh`).
-
-## Model access
-`google/gemma-4-31B-it` is gated on Hugging Face — make sure you've accepted the license and have a token
-available (`huggingface-cli login`, or set `HF_TOKEN`) so the weights can download into `hf_cache`.
+## Next → run it
+Everything else — checking/pulling the public image, cloning this repo, and running the cold sweep — is the
+copy-paste **4-step flow in [LAUNCH.md](./LAUNCH.md)**.
