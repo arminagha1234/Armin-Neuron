@@ -1,0 +1,66 @@
+[W723 19:41:23.736014684 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+W0723 19:41:23.172000 63767 torch/distributed/run.py:851] 
+W0723 19:41:23.172000 63767 torch/distributed/run.py:851] *****************************************
+W0723 19:41:23.172000 63767 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0723 19:41:23.172000 63767 torch/distributed/run.py:851] *****************************************
+[W723 19:41:25.029837896 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+[W723 19:41:25.036774957 OperatorEntry.cpp:208] Warning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: aten::gather.out(Tensor self, int dim, Tensor index, *, bool sparse_grad=False, Tensor(a!) out) -> Tensor(a!)
+    registered at /pytorch/build/aten/src/ATen/RegisterSchema.cpp:6
+  dispatch key: PrivateUse1
+  previous kernel: registered at /pytorch/build/aten/src/ATen/RegisterCPU_3.cpp:7637
+       new kernel: registered at NeuronDispatcher.cpp:0 (function operator())
+2026-Jul-23 19:41:29.0780 63783:63783 [1] int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t**):232 CCOM WARN NET/OFI Failed to initialize rdma protocol
+2026-Jul-23 19:41:29.0783 63783:63783 [1] int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t**):376 CCOM WARN NET/OFI aws-ofi-nccl initialization failed
+2026-Jul-23 19:41:29.0785 63783:63783 [1] ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t):78 CCOM WARN NET/OFI Initializing plugin failed
+2026-Jul-23 19:41:29.0788 63783:63783 [1] net_plugin.cc:97 CCOM WARN OFI plugin initNet() failed is EFA enabled?
+2026-Jul-23 19:41:38.0781 63782:63782 [0] int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t**):232 CCOM WARN NET/OFI Failed to initialize rdma protocol
+2026-Jul-23 19:41:38.0784 63782:63782 [0] int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t**):376 CCOM WARN NET/OFI aws-ofi-nccl initialization failed
+2026-Jul-23 19:41:38.0786 63782:63782 [0] ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t):78 CCOM WARN NET/OFI Initializing plugin failed
+2026-Jul-23 19:41:38.0788 63782:63782 [0] net_plugin.cc:97 CCOM WARN OFI plugin initNet() failed is EFA enabled?
+world_size=2  per-rank sharded params ~= 50.65 M
+step |  recon_loss | sec  (step 0 includes fwd+bwd NEFF compile)
+/home/ubuntu/workspace/torch_neuron_eager/torch_neuronx/python_ops/nki_kernels/foreach_elementwise.py:380: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  vt = torch.tensor(v, device=s.device, dtype=compute_dtype).reshape(1, 1)
+/home/ubuntu/workspace/torch_neuron_eager/torch_neuronx/python_ops/nki_kernels/foreach_elementwise.py:380: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  vt = torch.tensor(v, device=s.device, dtype=compute_dtype).reshape(1, 1)
+/home/ubuntu/workspace/native_venv/lib/python3.12/site-packages/torch/fx/experimental/proxy_tensor.py:1654: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  return func(*args, **kwargs)
+/home/ubuntu/workspace/native_venv/lib/python3.12/site-packages/torch/fx/experimental/proxy_tensor.py:1654: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  return func(*args, **kwargs)
+   0 |    1.327578 |  47.6
+   1 |    1.257347 |   1.3
+   2 |    1.179303 |   0.7
+   3 |    1.140221 |   0.7
+   4 |    1.112108 |   0.7
+   5 |    1.089938 |   0.7
+   6 |    1.072030 |   0.7
+   7 |    1.057175 |   0.7
+   8 |    1.044746 |   0.7
+   9 |    1.034661 |   0.7
+  10 |    1.026654 |   0.7
+  11 |    1.020368 |   0.7
+  12 |    1.015848 |   0.7
+  13 |    1.012506 |   0.7
+  14 |    1.010332 |   0.7
+  15 |    1.008646 |   0.7
+  16 |    1.007707 |   0.7
+  17 |    1.007287 |   0.7
+  18 |    1.006912 |   0.7
+  19 |    1.006512 |   0.7
+
+mean(first5)=1.203311  mean(last5)=1.007413  decreased=True
+FSDP_PRETRAIN_OK
