@@ -20,12 +20,14 @@ served from cache). A custom **NKI prefill kernel** cuts ≤16k TTFT by up to **
 
 ## TP scaling — P99 TTFT (TP32 vs TP16 vs TP8), cold
 
-![P99 TTFT vs concurrency](assets/grid_ttft_p99_vs_conc.png)
-*Cold **P99** TTFT vs concurrency, one panel per input size, LNC=2 chip mapping (TP32=8 chips, TP16=4,
-TP8=2). **Key insight: TP16 out-scales TP32 under load** — past conc≈8 the 4-chip config's tail is far
-lower (4k conc32: TP16 ≈ 30 s vs TP32 ≈ 113 s), because 4-chip replicas parallelize the queue. Use TP32
-for lowest single-request latency, TP16/TP8 for throughput/density. P99 is tail latency from a modest
-sample count per cell — indicative of behavior under load, not an SLA guarantee.*
+![P99 TTFT vs concurrency — Trn2 TP32/16/8 vs H100, all input sizes](assets/ttft_tp_vs_h100_conc_p99.png)
+*Cold **P99** TTFT vs concurrency — **one panel per input size (4k / 8k / 16k / 32k / 64k)**, Trn2 **TP32
+(8 chips) / TP16 (4 chips) / TP8 (2 chips)** vs the **H100 ×2 80GB (TP2)** reference (H100 line is its
+**median**, shown dashed — P99 was not captured for H100). **Key insight: TP16 out-scales TP32 under load** —
+past conc≈8 the 4-chip config's tail is far lower (4k conc32: TP16 ≈ 30 s vs TP32 ≈ 113 s), because 4-chip
+replicas parallelize the queue. Use TP32 for lowest single-request latency, TP16/TP8 for throughput/density.
+P99 is tail latency from a modest sample count per cell — indicative of behavior under load, not an SLA
+guarantee.*
 
 ![P99 TTFT by size @ conc=1](assets/grid_ttft_p99_by_size_conc1.png)
 *Cold **P99** TTFT by input size at conc=1. At conc=1, P99 = median (single request). ≤16k uses the fast
@@ -34,8 +36,14 @@ H100 line is median (P99 not captured this run).*
 
 ## TP scaling — median TTFT (the headline numbers)
 
-![median TTFT vs concurrency](assets/grid_ttft_med_vs_conc.png)
-*Cold **median** TTFT vs concurrency. Same shape, median values — the numbers to quote.*
+![median TTFT vs concurrency — Trn2 TP32/16/8 vs H100, all input sizes](assets/ttft_tp_vs_h100_conc_med.png)
+*Cold **median** TTFT vs concurrency — **one panel per input size (4k / 8k / 16k / 32k / 64k)**, one colored
+line per config: Trn2 **TP32 (8 chips) / TP16 (4 chips) / TP8 (2 chips)** vs **H100 ×2 80GB (TP2)**. Log–log so
+the sub-second short-context and the tens-of-seconds long-context points are both readable. **≤16k:** Trn2 TP32
+tracks H100 at conc=1, but the 8-chip replica serializes cold prefills past conc≈4 so H100 pulls ahead under
+load, while **TP16 holds the best tail** (2 replicas parallelize the queue). **32k/64k:** Trn2 ran conc 1/2/4
+only (segmented path) and is honestly slower than H100 here — see [long-context](#long-context-3264k--honest).
+TP8 64k not run. (H100 = quarter-box TP2 reference, prior session; full-box comparison would differ.)*
 
 ![median TTFT by size @ conc=1](assets/grid_ttft_med_by_size_conc1.png)
 *Cold **median** TTFT by input size @ conc=1, Trn2 TP32/16/8 vs H100 2×80GB TP2. Trn2 TP32 matches H100 at
