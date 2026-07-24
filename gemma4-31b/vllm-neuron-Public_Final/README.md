@@ -71,16 +71,15 @@ median-of-10, error bars = min/max.*
 | 4k (~3.7–4.2k) | **0.239** | 0.315 | 1.20 | 0.240 |
 | 8k (~8.1k) | **0.422** | 1.17 | 1.20 | 0.461 |
 | 16k (~15.1k) | **0.806** | 1.18 | 2.46 | 1.008 |
-| 32k (~31k) † | 10.66 | 16.54 | 30.45 | 2.377 |
-| 64k (~63k) † | 47.98 | 69.10 | (n/r) | 5.778 |
+| 32k (~31k) † | 9.98 | 16.54 | 30.45 | 2.377 |
+| 64k (~63k) † | 44.79 | 69.10 | (n/r) | 5.778 |
 
 † 32k/64k use the **segmented** prefill path (much slower than ≤16k single-shot — this is a known cliff, not
 smooth scaling). H100 wins long-context. **(n/r)** = not run (TP8 64k skipped). TP8 fit **up to 32k with no
 OOM** — better than prior beta reports of TP8 OOMing at ≥16k.
 
-> **Rigor note:** ≤16k conc=1 values are **median-of-10** (±0.003 s, reproduced 3×) — quote these freely.
-> 32k/64k conc=1 values are **single-sample** (grid rigor) and should be treated as **indicative** until
-> re-run with median-of-10; 32k reproduced ~10.7 s across two independent runs, so it is trustworthy to ~1 s.
+> **Rigor note:** all TP32 conc=1 values are **median-verified** — ≤16k **median-of-10** (±0.003 s, reproduced
+> 3×), 32k **median-of-10** (9.975 s ±0.001), 64k **median-of-6** (44.788 s ±0.001). Quote them freely.
 
 Full median + P99 tables for every input × concurrency × TP → **[RESULTS.md](RESULTS.md)**.
 
@@ -157,7 +156,7 @@ aggregate throughput). TP8 = 2 chips (4 replicas/box; highest single-request lat
 
 ## Long context (32k/64k) — honest
 
-32k/64k run correctly on the public image (bf16, segmented SEG=2048) but are **slow** (32k ~10.7 s, 64k ~48 s
+32k/64k run correctly on the public image (bf16, segmented SEG=2048) but are **slow** (32k ~10.0 s, 64k ~44.8 s
 at conc=1, TP32) and H100 wins here. The cause is a hard path swap at 16k: ≤16k uses the fused NKI kernel;
 >16k is forced onto a segmented torch path. Two fixes were investigated — see `ROADMAP.md`:
 - **Segmented NKI kernel** — attempted; the math is CPU-validated but the kernel does not yet engage on the
