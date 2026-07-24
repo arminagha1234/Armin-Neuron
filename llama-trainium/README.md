@@ -20,7 +20,8 @@ If you've used a GPU in PyTorch, this will feel familiar — the only change is
 |---|---|---|---|
 | [`training-smoke-test/`](./training-smoke-test/) | tiny GPT (from scratch) | ✅ works | 30-line training loop — verify your Trainium can train before you touch Llama |
 | [`llama-7b/`](./llama-7b/) | LLaMA-1 7B (`huggyllama/llama-7b`) | ✅ **validated** | Single NeuronCore inference; **100%** token agreement vs CPU fp32 |
-| [`llama-3.1-8b/`](./llama-3.1-8b/) | Llama-3.1-8B (`meta-llama/Llama-3.1-8B`) | 🚧 WIP (tensor-parallel) | 8B needs 2-core TP; sharding + load work, the cross-core collective is a current beta limitation — see its README |
+| [`llama-3.1-8b/`](./llama-3.1-8b/) | Llama-3.1-8B (`meta-llama/Llama-3.1-8B`) | ✅ **validated** (TP=2) | 2-core tensor parallelism; **100%** token agreement vs CPU fp32 |
+| [`llama-2-13b-chat/`](./llama-2-13b-chat/) | Llama-2-13b-chat (`meta-llama/Llama-2-13b-chat-hf`) | ⚠️ needs Trn2 | 13B needs TP≥4 (cross-chip); OOMs at TP=2, and cross-chip TP is blocked on the Trn1 beta — run on Trn2 |
 
 ## The one thing to know about memory (read this first)
 
@@ -35,6 +36,18 @@ overhead). That determines what fits on a single core:
 This is why `llama-7b/` is a simple single-core script and `llama-3.1-8b/` is a
 `torchrun` tensor-parallel script. Quantization (int8/fp8) isn't available in the
 current beta, so the fix for big models is more cores, not smaller weights.
+
+Measure your own core's usable budget with [`hbm_probe.py`](./hbm_probe.py):
+```bash
+python3 hbm_probe.py     # allocates until OOM; reports ~14 GB on a Trn1 core
+```
+
+## Something broken?
+
+[**TROUBLESHOOTING.md**](./TROUBLESHOOTING.md) covers every error we actually hit,
+with the fix: TP hangs on the collective barrier, OOM signatures, `device barrier`
+init failures, rank SIGABRT/SIGSEGV, HF 403s, and which scary-looking warnings are
+safe to ignore.
 
 ## Quickstart
 
