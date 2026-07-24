@@ -24,8 +24,11 @@ served from cache). A custom **NKI prefill kernel** cuts ≤16k TTFT by up to **
 *Cold **P99** TTFT vs concurrency — **one panel per input size (4k / 8k / 16k / 32k / 64k)**, Trn2 **TP32
 (8 chips) / TP16 (4 chips) / TP8 (2 chips)** vs the **H100 ×2 80GB (TP2)** reference (H100 line is its
 **median**, shown dashed — P99 was not captured for H100). **Key insight: TP16 out-scales TP32 under load** —
-past conc≈8 the 4-chip config's tail is far lower (4k conc32: TP16 ≈ 30 s vs TP32 ≈ 113 s), because 4-chip
-replicas parallelize the queue. Use TP32 for lowest single-request latency, TP16/TP8 for throughput/density.
+past conc≈8 the 4-chip config's tail is far lower (4k conc32: TP16 ≈ 30 s vs TP32 ≈ 113 s). Each Trn2 line is a
+**single vLLM server** (one replica) taking all the concurrency, so this is **not** replica parallelism: TP32
+uses 2× the chips of TP16 but scales **sublinearly** (more all-reduce/collective communication per step), so
+under load it becomes throughput-bound and its tail balloons, while the leaner TP16 sustains higher throughput.
+Use TP32 for lowest single-request latency, TP16 for the best tail under load.
 P99 is tail latency from a modest sample count per cell — indicative of behavior under load, not an SLA
 guarantee.*
 
@@ -39,9 +42,11 @@ H100 line is median (P99 not captured this run).*
 ![median TTFT vs concurrency — Trn2 TP32/16/8 vs H100, all input sizes](assets/ttft_tp_vs_h100_conc_med.png)
 *Cold **median** TTFT vs concurrency — **one panel per input size (4k / 8k / 16k / 32k / 64k)**, one colored
 line per config: Trn2 **TP32 (8 chips) / TP16 (4 chips) / TP8 (2 chips)** vs **H100 ×2 80GB (TP2)**. Log–log so
-the sub-second short-context and the tens-of-seconds long-context points are both readable. **≤16k:** Trn2 TP32
-tracks H100 at conc=1, but the 8-chip replica serializes cold prefills past conc≈4 so H100 pulls ahead under
-load, while **TP16 holds the best tail** (2 replicas parallelize the queue). **32k/64k:** Trn2 ran conc 1/2/4
+the sub-second short-context and the tens-of-seconds long-context points are both readable. Each Trn2 line is a
+**single vLLM server** at that TP (one replica) taking all the concurrency. **≤16k:** Trn2 TP32 wins at conc=1
+(widest tensor-parallelism finishes one prefill fastest), but under load **TP16 pulls ahead** — TP32 uses 2× the
+chips yet scales sublinearly (more collective communication over more ranks), so it is throughput-bound sooner
+and its TTFT climbs faster; H100 leads under load. **32k/64k:** Trn2 ran conc 1/2/4
 only (segmented path) and is honestly slower than H100 here — see [long-context](#long-context-3264k--honest).
 TP8 64k not run. (H100 = quarter-box TP2 reference, prior session; full-box comparison would differ.)*
 
@@ -146,8 +151,9 @@ Results land in `results_<timestamp>/` (per-size JSON + `summary.csv`). One serv
 | **TP16** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **TP8** | ✅ | ✅ | ✅ | ✅ | (not run) |
 
-TP32 = 8 chips (whole box, lowest latency). TP16 = 4 chips (2 replicas/box, ~2× throughput, best tail under
-load). TP8 = 2 chips (4 replicas/box, highest single-request latency but fit up to 32k on public).
+TP32 = 8 chips (whole box, lowest single-request latency). TP16 = 4 chips — **best sustained throughput / tail
+under load in these single-server runs** (and in production you can also fit 2 TP16 replicas per box for ~2×
+aggregate throughput). TP8 = 2 chips (4 replicas/box; highest single-request latency but fit up to 32k on public).
 
 ## Long context (32k/64k) — honest
 
