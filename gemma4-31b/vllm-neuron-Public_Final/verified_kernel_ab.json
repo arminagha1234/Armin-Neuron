@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "description": "VERIFIED conc=1 TTFT, median-of-10 with 3-warmup, PUBLIC image, text-only, bf16, no-APC, TP32, unique random prompts (no APC reuse). Box ec2-3-19-59-18 (48xl, not throttled).",
+    "method": "3 warmup requests per bucket to absorb cold-compile, then 10 measured. Reports median + min/max + stdev.",
+    "date": "2026-07-23",
+    "serve_config": "TP32, max-model-len 16384, --async-scheduling, --no-enable-prefix-caching, buckets [256..16384], greedy",
+    "note_on_labels": "Nominal size labels (4k/8k/14k) are bencher TARGETS. ACTUAL prompt tokens differ slightly — use actual_tokens for any published claim.",
+    "caveat": "Earlier single-sample runs swung ~2x due to cold-bucket compile noise; warmup+median-of-10 makes TTFT stable to <=0.3%. THIS file supersedes any single-sample numbers."
+  },
+  "kernel_on": {
+    "4k":  {"actual_tokens": 3719, "median_s": 0.237, "min_s": 0.234, "max_s": 0.244, "stdev_s": 0.003, "n": 10},
+    "8k":  {"actual_tokens": 8123, "median_s": 0.424, "min_s": 0.421, "max_s": 0.433, "stdev_s": 0.003, "n": 10},
+    "14k": {"actual_tokens": 13950, "median_s": 0.811, "min_s": 0.807, "max_s": 0.814, "stdev_s": 0.002, "n": 10}
+  },
+  "kernel_off": {
+    "_status": "PENDING — kernel-OFF (torch fallback) baseline serve compiling on :8000; auto-measures via task bq7e5nfta",
+    "4k":  null,
+    "8k":  null,
+    "14k": null
+  },
+  "concurrency_scaling_kernel_on": {
+    "_note": "From trusted bench_random16, kernel ON. conc=1 values match median-of-10 above within noise.",
+    "4k":  {"conc1": 0.238, "conc2": 0.530, "conc4": 0.978},
+    "8k":  {"conc1": 0.801, "conc2": 0.622, "conc4": 1.910},
+    "15k": {"conc4": 1.999, "note": "conc1/2 errored on prompt-length variance over 16384 cap; rerun with fixed-length"}
+  }
+}
