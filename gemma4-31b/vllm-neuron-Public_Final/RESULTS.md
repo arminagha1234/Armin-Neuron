@@ -78,6 +78,23 @@ Token counts are ACTUAL measured (~4k=3.7-4.2k, ~16k=15.1k, ~32k=31k, ~64k=63k),
 | 64k | — | — | — | — | — | — |
 
 
+## H100 ×2 80GB (TP2) — reference sweep (prior session)
+
+Comparable-scale GPU baseline: 2× H100 80GB, TP=2. conc=1 medians match the conc=1 line in the README table
+exactly (4k 0.240 / 8k 0.461 / 16k 1.008 / 32k 2.377 / 64k 5.778). This is the H100 line drawn in the
+"vs concurrency" charts. **P99 was not captured for H100**, so on the P99 chart the H100 line is this median.
+
+**TTFT median (s):**
+
+| input | c1 | c2 | c4 | c8 | c16 | c32 |
+|---|---|---|---|---|---|---|
+| 4k | 0.240 | 0.359 | 0.637 | 1.139 | 2.075 | 3.964 |
+| 8k | 0.461 | 0.694 | 1.197 | 2.157 | 4.100 | 8.021 |
+| 16k | 1.008 | 1.510 | 2.569 | 4.651 | 8.812 | 16.894 |
+| 32k | 2.377 | 3.565 | 5.927 | 10.714 | 20.192 | 42.746 |
+| 64k | 5.778 | 8.699 | 14.594 | 26.003 | 48.894 | 94.487 |
+
+
 ## Notes
 - TP8 fit **up to 32k** with no OOM on public (better than prior beta reports of TP8 OOM ≥16k). 64k@TP8 not run.
 - 32k/64k use segmented prefill (SEG=2048) — the 16k→32k jump is the single-shot(NKI)→segmented(torch) path swap, not smooth scaling.
