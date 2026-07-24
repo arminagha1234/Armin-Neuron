@@ -37,6 +37,18 @@ This is why `llama-7b/` is a simple single-core script and `llama-3.1-8b/` is a
 `torchrun` tensor-parallel script. Quantization (int8/fp8) isn't available in the
 current beta, so the fix for big models is more cores, not smaller weights.
 
+Measure your own core's usable budget with [`hbm_probe.py`](./hbm_probe.py):
+```bash
+python3 hbm_probe.py     # allocates until OOM; reports ~14 GB on a Trn1 core
+```
+
+## Something broken?
+
+[**TROUBLESHOOTING.md**](./TROUBLESHOOTING.md) covers every error we actually hit,
+with the fix: TP hangs on the collective barrier, OOM signatures, `device barrier`
+init failures, rank SIGABRT/SIGSEGV, HF 403s, and which scary-looking warnings are
+safe to ignore.
+
 ## Quickstart
 
 1. Get a Trainium instance and the TorchNeuron container running — see [`SETUP.md`](./SETUP.md).
