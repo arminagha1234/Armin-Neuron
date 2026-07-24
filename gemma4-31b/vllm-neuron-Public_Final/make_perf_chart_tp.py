@@ -118,16 +118,17 @@ def make_sweep(data, metric, fname, h100_is_median):
     axf[5].annotate(
         "Reading the panels\n\n"
         "- Lower is better (log ms).\n"
-        "- <=16k: Trn2 TP32 is competitive with\n"
-        "  H100 at conc=1; H100 pulls ahead as\n"
-        "  concurrency rises (8-chip replica\n"
-        "  serializes cold prefills past conc~4).\n"
-        "- TP16 (4 chips) has the best tail under\n"
-        "  load - 2 replicas parallelize the queue.\n"
-        "- 32k/64k use the segmented path and are\n"
-        "  honestly slow on the public image; H100\n"
-        "  wins long-context. See ROADMAP.md.\n"
-        "- TP8 64k: not run (skipped).",
+        "- Each Trn2 line = ONE vLLM server at\n"
+        "  that TP (one replica) taking all the\n"
+        "  concurrency - not multiple replicas.\n"
+        "- <=16k: TP32 wins at conc=1 (widest TP\n"
+        "  = fastest single prefill); under load\n"
+        "  TP16 wins - TP32 doubles the chips but\n"
+        "  scales sublinearly (more collectives),\n"
+        "  so it is throughput-bound sooner.\n"
+        "- H100 leads under load & long-context.\n"
+        "- 32k/64k: segmented path, honestly slow\n"
+        "  (see ROADMAP.md). TP8 64k: not run.",
         (0.02, 0.98), xycoords="axes fraction", va="top", ha="left",
         fontsize=9.5, family="monospace")
     fig.tight_layout(rect=[0, 0, 1, 0.92 if h100_is_median else 0.94])
