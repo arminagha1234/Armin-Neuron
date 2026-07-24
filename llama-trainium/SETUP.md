@@ -78,3 +78,28 @@ See the per-example READMEs:
 - Each Trn1 NeuronCore has **16 GB HBM** — a 7B model fits on one core, an 8B does
   not (see the top-level README's memory section).
 - Do **not** commit tokens, credentials, or private image URIs to this repo.
+
+## Multi-core (tensor parallelism)
+
+Models bigger than one core's 16 GB HBM (e.g. an 8B or larger) must be sharded
+across cores. Native TP uses `torch.distributed` with the `neuron` backend + HF
+`tp_plan="auto"`. **Host collective communication is required** — without it the
+all-reduce hangs:
+
+```bash
+NEURON_RT_NUM_CORES=<N> TORCH_NEURONX_ENABLE_HOST_CC=1 TORCH_NEURONX_ENABLE_ASYNC_NRT=1 \
+  torchrun --nnodes 1 --nproc_per_node=<N> --rdzv_backend c10d --rdzv_endpoint localhost:29500 \
+  your_tp_script.py ...
+```
+
+Gotchas:
+- **`TORCH_NEURONX_ENABLE_HOST_CC=1` is essential.** Without it, the intra-node
+  collective tries the OFI/EFA device path (fails to init in-container) and hangs
+  on the barrier. The `aws-ofi-nccl init failed / is EFA enabled?` warning is benign.
+- **Restart the container between TP runs** — teardown leaves stale runtime state
+  that breaks the next `init_process_group`.
+- On **Trn1**, TP=2 (both cores on one chip) works; cross-chip TP (TP≥4) currently
+  fails at the device-barrier init on the beta backend. Use **Trn2** for models
+  that need TP≥4 (e.g. a 13B).
+
+See [`llama-3.1-8b/`](./llama-3.1-8b/) for a validated 2-core example.
