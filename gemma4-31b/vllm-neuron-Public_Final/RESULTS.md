@@ -2,7 +2,7 @@
 
 Model: **google/gemma-4-31B** (text-only). Image: public vLLM-Neuron 0.21 (SDK 2.31 / neuronx-cc 2.26).
 NKI prefill kernel ON + bf16 fallback. Unique random prompt per request (APC cannot serve → true cold prefill).
-conc=1 is median-of-10 (±0.003s, reproduced 3×); conc≥2 warmup+bench. **P99 = tail latency, indicative (modest N/cell), NOT an SLA guarantee.**
+**TP32 conc=1 is median-verified** (≤16k median-of-10 ±0.003s reproduced 3×; 32k median-of-10 9.975±0.001; 64k median-of-6 44.788±0.001). conc≥2 warmup+bench. **P99 = tail latency, indicative (modest N/cell), NOT an SLA guarantee.**
 Token counts are ACTUAL measured (~4k=3.7-4.2k, ~16k=15.1k, ~32k=31k, ~64k=63k), not round labels.
 
 
@@ -15,8 +15,8 @@ Token counts are ACTUAL measured (~4k=3.7-4.2k, ~16k=15.1k, ~32k=31k, ~64k=63k),
 | 4k | 0.239 | 0.535 | 0.586 | 6.378 | 20.816 | 50.018 |
 | 8k | 0.422 | 0.631 | 1.621 | 8.238 | 23.319 | 54.431 |
 | 16k | 0.806 | 1.212 | 2.408 | 9.229 | 25.416 | 58.588 |
-| 32k | 10.664 | 16.003 | 26.661 | — | — | — |
-| 64k | 47.981 | 71.97 | 119.785 | — | — | — |
+| 32k | 9.975 | 16.003 | 26.661 | — | — | — |
+| 64k | 44.788 | 71.97 | 119.785 | — | — | — |
 
 
 **TTFT P99 (s):**
@@ -26,8 +26,8 @@ Token counts are ACTUAL measured (~4k=3.7-4.2k, ~16k=15.1k, ~32k=31k, ~64k=63k),
 | 4k | 0.239 | 0.645 | 0.916 | 22.939 | 46.562 | 112.937 |
 | 8k | 0.422 | 0.828 | 2.782 | 26.216 | 51.447 | 121.258 |
 | 16k | 0.806 | 1.595 | 3.694 | 27.71 | 54.781 | 129.44 |
-| 32k | 10.664 | 21.299 | 42.56 | — | — | — |
-| 64k | 47.981 | 95.874 | 191.496 | — | — | — |
+| 32k | 9.975 | 21.299 | 42.56 | — | — | — |
+| 64k | 44.788 | 95.874 | 191.496 | — | — | — |
 
 
 ## TP16 (4 chips / 2 replicas)
