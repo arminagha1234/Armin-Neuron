@@ -1,0 +1,17 @@
+{
+  "elapsed_s": 131.17,
+  "s_per_step": 16.396,
+  "world_size": 4,
+  "num_frames": 19,
+  "resolution": [
+    848,
+    480
+  ],
+  "num_steps": 8,
+  "guidance_scale": 1.0,
+  "visual_tokens": 6360,
+  "compiled": false,
+  "rope_dtype": "fp32",
+  "q_chunk": 0,
+  "n_frames_out": 19
+}
