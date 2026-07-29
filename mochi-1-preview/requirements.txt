@@ -1,0 +1,23 @@
+# Mochi-1 on Trainium — native PyTorch (TorchNeuron)
+#
+# torch, torch-neuronx, neuronx-cc and nki come pre-installed in the Beta-3
+# DLC (421672808698.dkr.ecr.us-east-1.amazonaws.com/concourse-release-0461d3b:latest).
+# Do NOT reinstall torch in that container — it will break the Neuron backend.
+#
+# Only these are needed on top:
+diffusers==0.36.0
+transformers==5.13.0
+safetensors==0.8.0
+accelerate==1.14.0
+sentencepiece==0.2.2          # T5Tokenizer for the text encoder
+huggingface-hub==1.25.1
+imageio==2.37.4               # export_to_video
+imageio-ffmpeg==0.6.0         # mp4 muxing
+
+# Offline testing on a laptop (no Neuron) additionally needs a CPU torch:
+#   pip install torch==2.12.0
+# The staged offline suite was verified against torch 2.12.0 + diffusers 0.36.0.
+#
+# Versions confirmed present on PyPI 2026-07-28. If the DLC ships an older
+# transformers, prefer the DLC's version over pinning — the port does not
+# depend on transformers 5.x specifics.
