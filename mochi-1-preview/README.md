@@ -6,19 +6,41 @@ to Trainium using the **native PyTorch backend (TorchNeuron)** — eager plus
 
 ## Status: working on device
 
-Validated end-to-end on trn2.48xlarge, eager mode, TP=4.
+Validated end-to-end on trn2.48xlarge, TP=4, in **both** eager and
+`torch.compile` modes. TP=4 fits one Trn2 device (4 logical cores × 24 GB at
+LNC=2), so this runs on a single **trn2.3xlarge** — the 48xl just packs 16×
+that capacity.
 
 ![Mochi-1 on Trainium2, frame 15 of 31](results/frame_15.png)
 
 *"Close-up of a chameleon's eye, with its scaly skin changing color. Ultra
 high resolution 4k." — 848×480, 31 frames, 64 steps, cfg 4.5, TP=4 eager.*
 
+## Which mode: eager or `torch.compile`?
+
+The one decision to make before running. **For this model, `torch.compile` is
+a memory lever, not a speed lever** — it does not make short clips faster; it
+is what makes long clips *fit*. Pick by frame count:
+
+| Frames | Mode | Why |
+|---:|---|---|
+| ≤ 31 | **eager** (default) | fits, and faster to a result — no ~13 min compile, and per-step is ≤ compiled here |
+| 61–85 | **`--compile`** | eager OOMs (allocator fragmentation); compile's whole-graph buffer assignment is the only way it fits |
+| ≥ 163 | neither yet | compiler limit `NCC_IBTN020` at 44,520 tokens (see envelope below) |
+
+Measured per-step is ~6.3 s eager vs ~8–15 s compiled warm — compile did not
+speed up the step because the DiT is matmul-bound and attention is already
+tiled, leaving little to fuse. Its win is buffer assignment (memory). A cold
+compile is a one-time cost (~13/25/53 min at 31/61/85f), amortized by the
+persistent NEFF cache. **Recommendation for customers: eager for ≤31f,
+`--compile` for 61f+.**
+
 | Stage | State |
 |---|---|
 | Architecture analysis against the real checkpoint | done |
 | `torch.nonzero` removal (the one hard blocker) | done, verified vs upstream |
 | Fused-SwiGLU TP sharding | done, verified |
-| TP plan (573 entries, TP ∈ {2,4,8}) | done, all paths resolve |
+| TP plan (573 entries, TP ∈ {1,2,4}; TP=8 fail-fast) | done, all paths resolve |
 | Tiled attention for long clips | done, verified exact |
 | RoPE CPU precompute + head-axis sharding | done, verified bit-exact |
 | Sharded meta-init weight loader | **working** — 1071 tensors in 3.0 s |
@@ -27,7 +49,7 @@ high resolution 4k." — 848×480, 31 frames, 64 steps, cfg 4.5, TP=4 eager.*
 | `torch.compile` path | **working** — extends envelope to 85 frames |
 | Accuracy vs a CPU reference | **measured — cosine 0.9991, rel L2 4.2%** |
 
-Offline suite: **54/54 passing**, both on macOS CPU (torch 2.12) and inside
+Offline suite: **76/76 passing**, both on macOS CPU (torch 2.12) and inside
 the Beta-3 DLC (torch 2.11).
 
 ### Measured results
@@ -36,6 +58,21 @@ the Beta-3 DLC (torch 2.11).
 |---|---:|---:|---|
 | 19f, 4 steps, no CFG | 29 s (7.3 s/step) | 204 s | undersampled (Mochi wants ~64 steps) |
 | 31f, 64 steps, cfg 4.5 | ~400 s (6.3 s/step) | 662 s | **the validated result above** |
+
+### Acceptance runs (this exact shipped artifact, from `main`)
+
+Both modes re-validated end-to-end on a fresh clone of this directory, TP=4,
+trn2.48xlarge (Beta-3 DLC), to confirm the customer-facing code:
+
+| Run | Mode | Result | Artifact |
+|---|---|---|---|
+| 31f, 64 steps, cfg 4.5 | **eager** | 612.9 s, correct sharp output | `results/ACCEPTANCE_31f.mp4` |
+| 61f, 8 steps, cfg 4.5 | **`--compile`** | 2768 s (two-phase cold NEFF build), 61f, no OOM | `results/ACCEPTANCE_61f_compiled.mp4` |
+
+The 61f compiled run is the proof that the compile path fits and runs at a
+geometry eager cannot (eager OOMs at 61f). Its cold build was ~46 min because
+the tiled attention emits two graph shapes (main + remainder tile), each
+compiled once; the persistent NEFF cache amortizes this on repeat runs.
 
 ### Validated envelope, and where it stops
 
