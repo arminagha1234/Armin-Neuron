@@ -21,7 +21,7 @@ you into a shell. See `scripts/run_container.sh` for the exact `docker run`.
 ```bash
 hf download google/gemma-4-31B --local-dir /root/models/gemma-4-31b
 python3 make_textonly.py          # -> /root/models/gemma-4-31b-text
-bash install_public.sh            # register Gemma4ForCausalLM in the public plugin
+bash install_public.sh            # register Gemma4 + apply the CTE-prefill & bf16 perf patches
 ```
 `gemma-4-31B` ships as a multimodal checkpoint; `make_textonly.py` strips the vision config and emits a
 `Gemma4ForCausalLM` text-only model dir that serves cleanly on the public plugin.

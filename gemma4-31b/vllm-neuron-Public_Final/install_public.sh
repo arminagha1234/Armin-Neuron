@@ -29,6 +29,15 @@ mkdir -p "$DST"
 cp -f "$HERE/serving_pkg/gemma4/"*.py "$DST/"
 echo "[install] deployed gemma4 package -> $DST"
 
+# 1b. Apply the performance patches to the deployed model. WITHOUT these, the
+#     GEMMA4_CTE_PREFILL / GEMMA4_BF16_FALLBACK env vars (set by run_benchmark.sh
+#     and LAUNCH.md) are no-ops and <=16k TTFT regresses to the torch baseline
+#     (measured up to ~2x slower). Both patches are idempotent, gated by their env
+#     var (CTE default OFF, bf16 default ON once applied), and back up model.py.
+echo "[install] applying performance patches (CTE prefill kernel + bf16 fallback)"
+GEMMA4_MODEL_PY="$DST/model.py" python3 "$HERE/patches/patch_manual_sdpa_cte.py"
+GEMMA4_MODEL_PY="$DST/model.py" python3 "$HERE/patch_bf16_fallback.py"
+
 # 2. Register the architecture in registry.py (idempotent).
 REG="$MODEL_DIR/registry.py"
 python3 - "$REG" <<'PY'

@@ -97,7 +97,7 @@ bash scripts/run_container.sh   # mounts 16 Neuron devices + your model dir
 ```bash
 hf download google/gemma-4-31B --local-dir /root/models/gemma-4-31b
 python3 make_textonly.py         # builds /root/models/gemma-4-31b-text (strips vision config)
-bash install_public.sh           # registers Gemma4ForCausalLM in the public plugin
+bash install_public.sh           # registers Gemma4 + applies the CTE-prefill & bf16 perf patches
 ```
 > **Why text-only is required:** `gemma-4-31B` ships **multimodal** (`Gemma4ForConditionalGeneration` +
 > `vision_config`). On the public plugin that routes to the vision path and crashes. `make_textonly.py`
@@ -130,6 +130,11 @@ Results land in `results_<timestamp>/` (per-size JSON + `summary.csv`). One serv
 | **Fine prefill buckets** `[256..16384]` | big for short prompts (less padding) | ✅ measured |
 | **TP32** | lowest single-request latency | ✅ measured |
 | **`--async-scheduling`** | overlaps host dispatch | ✅ in the winning config |
+
+> The `attention_cte` kernel and bf16 fallback are wired into the model as **patches applied by `install_public.sh`**
+> (`patches/patch_manual_sdpa_cte.py`, `patch_bf16_fallback.py`) and **activated** by `GEMMA4_CTE_PREFILL=1` /
+> `GEMMA4_BF16_FALLBACK=1` (set in `run_benchmark.sh` and `LAUNCH.md`). Without the patches those env vars are inert
+> and ≤16k TTFT falls back to the slower torch path — so run `install_public.sh` before benchmarking.
 
 ## Configuration (defaults)
 

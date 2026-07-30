@@ -10,9 +10,21 @@ Applies to the fp32 fallback block (works whether or not the fast-prefill patch 
 that patch keeps the same fp32 block as its exception fallback). Idempotent, backs up, ast-checks.
 Gated by GEMMA4_BF16_FALLBACK (default 1 when applied). Reversible.
 """
-import ast, sys
+import ast, os, sys
 
-M = "/opt/conda/lib/python3.13/site-packages/vllm_neuron/model/gemma4/model.py"
+# Resolve the gemma4 model.py to patch. Overridable via GEMMA4_MODEL_PY so
+# install_public.sh can target the freshly deployed package dir (and so it works
+# on non-3.13 site-packages layouts).
+CANDIDATES = [
+    os.environ.get("GEMMA4_MODEL_PY", ""),
+    "/opt/conda/lib/python3.13/site-packages/vllm_neuron/model/gemma4/model.py",
+    "/opt/conda/lib/python3.11/site-packages/vllm_neuron/model/gemma4/model.py",
+    os.path.join(os.path.dirname(__file__), "serving_pkg", "gemma4", "model.py"),
+]
+M = next((p for p in CANDIDATES if p and os.path.exists(p)), "")
+if not M:
+    print("ERROR: could not locate gemma4 model.py; set GEMMA4_MODEL_PY"); sys.exit(2)
+M = os.path.abspath(M)
 src = open(M).read()
 if "BF16_FALLBACK_AB" in src:
     print("ALREADY PATCHED (bf16 fallback)"); sys.exit(0)
