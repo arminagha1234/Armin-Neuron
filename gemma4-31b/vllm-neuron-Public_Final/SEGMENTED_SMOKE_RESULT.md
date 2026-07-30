@@ -17,7 +17,8 @@
 ## What this confirms (honest)
 - The CPU/numpy proof validated the MASKING MATH (cos ≥ 0.9999), NOT the live NKI call on neuronx-cc 2.26. Math-correct ≠ runs-on-device.
 - **The safety design worked perfectly:** env-gated (default off), clean torch fallback, coherent output ("a city of romance, art, and culture"), and ZERO impact on the proven ≤16k path.
-- **>16k stays on the segmented torch path:** 32k ~10.7s, 64k ~48s (conc1, TP32) — the honest customer number.
+- **>16k stays on the segmented torch path:** 32k ~10.7s, 64k ~48s (conc1, TP32) in this A/B smoke
+  (median-of-5); the median-verified headline figures are **32k 9.98 s / 64k 44.79 s** (see RESULTS.md).
 
 ## Status
 - Patch reverted; box left in the proven config (≤16k CTE kernel + bf16 fallback intact).

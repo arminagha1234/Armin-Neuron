@@ -4,8 +4,8 @@ Symlinks weights from the flat source dir, writes a text-only config.json
 (drops vision/audio, promotes text_config, sets Gemma4ForCausalLM arch) and a
 patched tokenizer_config.json. Text-only config recipe for the public vLLM-Neuron plugin."""
 import glob, json, os
-SRC = "/models/gemma-4-31b-it"
-DST = "/root/models/gemma-4-31b-it-text"
+SRC = "/root/models/gemma-4-31b"
+DST = "/root/models/gemma-4-31b-text"
 os.makedirs(DST, exist_ok=True)
 for f in os.listdir(SRC):
     if f in ("config.json", "tokenizer_config.json", "tokenizer_config.json.bak"):

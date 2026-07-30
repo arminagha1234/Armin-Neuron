@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "VERIFIED conc=1 TTFT, median-of-10 with 3-warmup, PUBLIC image, text-only, bf16, no-APC, TP32, unique random prompts (no APC reuse). Box ec2-3-19-59-18 (48xl, not throttled).",
+    "description": "VERIFIED conc=1 TTFT, median-of-10 with 3-warmup, PUBLIC image, text-only, bf16, no-APC, TP32, unique random prompts (no APC reuse). trn2.48xlarge, not throttled.",
     "method": "3 warmup requests per bucket to absorb cold-compile, then 10 measured. Reports median + min/max + stdev.",
     "date": "2026-07-23",
     "serve_config": "TP32, max-model-len 16384, --async-scheduling, --no-enable-prefix-caching, buckets [256..16384], greedy",
@@ -13,13 +13,13 @@
     "14k": {"actual_tokens": 13950, "median_s": 0.811, "min_s": 0.807, "max_s": 0.814, "stdev_s": 0.002, "n": 10}
   },
   "kernel_off": {
-    "_status": "PENDING — kernel-OFF (torch fallback) baseline serve compiling on :8000; auto-measures via task bq7e5nfta",
+    "_status": "not captured in this run — kernel-OFF (torch fallback) baseline pending",
     "4k":  null,
     "8k":  null,
     "14k": null
   },
   "concurrency_scaling_kernel_on": {
-    "_note": "From trusted bench_random16, kernel ON. conc=1 values match median-of-10 above within noise.",
+    "_note": "From the cold-random sweep, kernel ON. conc=1 values match median-of-10 above within noise.",
     "4k":  {"conc1": 0.238, "conc2": 0.530, "conc4": 0.978},
     "8k":  {"conc1": 0.801, "conc2": 0.622, "conc4": 1.910},
     "15k": {"conc4": 1.999, "note": "conc1/2 errored on prompt-length variance over 16384 cap; rerun with fixed-length"}

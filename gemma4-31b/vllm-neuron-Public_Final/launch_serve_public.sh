@@ -6,7 +6,7 @@
 #
 #   LEN=5120 SEG=512 BUCKETS=512 MNS=32 KV_CACHE_DTYPE=auto APC=1 bash launch_serve_public.sh
 set -u
-MODEL=${MODEL:-/root/models/gemma-4-31b-it}
+MODEL=${MODEL:-/root/models/gemma-4-31b-text}
 SERVED_NAME=${SERVED_NAME:-gemma4}
 TP=${TP:-32}
 LEN=${LEN:-5120}

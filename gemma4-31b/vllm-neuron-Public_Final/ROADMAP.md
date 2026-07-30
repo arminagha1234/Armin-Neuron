@@ -1,7 +1,8 @@
 # Long-context roadmap (32k / 64k)
 
 ≤16k is fast (single-shot NKI kernel). 32k/64k currently use a **segmented** prefill path that is correct
-but slow (32k ~10.7s, 64k ~48s at conc=1, TP32). Two levers were investigated to close this:
+but slow (32k ~10.7s, 64k ~48s at conc=1, TP32, from the segmented A/B smoke session; the
+median-verified headline figures in RESULTS.md are **9.98 s / 44.79 s**). Two levers were investigated to close this:
 
 ## 1. Segmented NKI kernel (near-term)
 Extend the ≤16k NKI `attention_cte` kernel to the >16k segmented path (replacing the torch fallback).
