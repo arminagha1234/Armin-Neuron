@@ -29,7 +29,7 @@ for sz in ${ONLY//,/ }; do
   # warmup + bench
   for w in 1 2 3; do curl -s -m180 http://localhost:8000/v1/completions -H 'Content-Type: application/json' \
     -d "{\"model\":\"gemma4\",\"prompt\":\"$(python3 -c "import random;random.seed($w);print(' '.join(str(random.randint(0,9)) for _ in range($((ctx/2)))))")\",\"max_tokens\":8}" >/dev/null 2>&1; done
-  python3 bench_random16.py --ctx-tokens "$ctx" --gen "$GEN" --levels "$lv" --range-ratio 0 \
+  python3 bench_sweep.py --size "$sz" --gen "$GEN" --levels "$lv" \
     --out "$OUT/rand_${sz}.json" 2>&1 | grep -aE '^ *[0-9]' | while read c ok err intok tt p99 tpot rest; do
       echo "$sz,$c,$TP,$intok,$tt,$p99,$tpot,ok" >> "$OUT/summary.csv"; done
   pkill -f "vllm serve"; sleep 8   # NOTE: if next serve fails to init cores, restart the container (orphan-worker guard)

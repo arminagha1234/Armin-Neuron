@@ -59,7 +59,7 @@ def run_level(base_url, model, nwords, conc, gen, timeout):
     ptok=round(statistics.mean([r["ptok"] for r in ok if r.get("ptok")])) if ok else None
     return {"conc":conc,"ok":len(ok),"err":len(errs),
             "in_tok":ptok,
-            "ttft_mean_s":round(statistics.mean(ttfts),3) if ttfts else None,
+            "ttft_med_s":round(statistics.median(ttfts),3) if ttfts else None,
             "ttft_p99_s":round(ttfts[min(len(ttfts)-1,int(len(ttfts)*0.99))],3) if ttfts else None,
             "tpot_mean_ms":round(1000*statistics.mean(tpots),1) if tpots else None,
             "first_err":(errs[0]["error"] if errs else None)}
@@ -81,15 +81,15 @@ def main():
     levels=[int(x) for x in args.levels.split(",")]
     run_level(args.base_url,args.model,nwords,1,min(8,args.gen),args.timeout)  # warm graph (short)
     print(f"### {args.size} input, {args.gen} output (PUBLIC image, text-only, cold random, no APC) ###",flush=True)
-    print(f"{'conc':>4} {'ok':>3} {'err':>3} {'in_tok':>7} {'TTFT_s':>8} {'TTFT_p99':>9} {'TPOT_ms':>8}",flush=True)
+    print(f"{'conc':>4} {'ok':>3} {'err':>3} {'in_tok':>7} {'TTFT_med':>8} {'TTFT_p99':>9} {'TPOT_ms':>8}",flush=True)
     rows=[]
     for c in levels:
         r=run_level(args.base_url,args.model,nwords,c,args.gen,args.timeout); rows.append(r)
         print(f"{r['conc']:>4} {r['ok']:>3} {r['err']:>3} {str(r['in_tok']):>7} "
-              f"{str(r['ttft_mean_s']):>8} {str(r['ttft_p99_s']):>9} {str(r['tpot_mean_ms']):>8}"
+              f"{str(r['ttft_med_s']):>8} {str(r['ttft_p99_s']):>9} {str(r['tpot_mean_ms']):>8}"
               +(f"  ERR:{r['first_err']}" if r['err'] else ""),flush=True)
     out=args.out or f"{args.size}.json"
-    json.dump({"size":args.size,"gen":args.gen,"image":"public.ecr.aws SDK2.31","model":"gemma-4-31b-it text-only",
+    json.dump({"size":args.size,"gen":args.gen,"image":"public.ecr.aws SDK2.31","model":"gemma-4-31b text-only",
                "TP":32,"APC":"off","dtype":"bf16","rows":rows}, open(out,"w"), indent=2)
     print(f"saved -> {out}",flush=True)
 
