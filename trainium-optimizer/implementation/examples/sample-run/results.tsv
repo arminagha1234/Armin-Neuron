@@ -1,0 +1,14 @@
+commit	stage	origin	layer	source	metric	mfu	correctness	compile_s	status	description
+c845	baseline				845.0	0.33	100.0	391	keep	baseline BF16 experts FP8 KV
+c899	config		config		899.5	0.35	100.0	331	keep	batch1024 block128
+c860	config		config		860.0	-1.0	100.0	290	discard	1024 segment slower
+c858	config		config		858.0	-1.0	100.0	310	discard	16-tok KV blocks slower
+c1031	config		config		1031.5	0.41	100.0	305	keep	GQA broadcast
+c1124	known_kernel	harvested	kernel	nki-library@7f3a1b2	1124.5	0.44	100.0	402	keep	nkilib rmsnorm_quant
+c1100	known_kernel	harvested	kernel	nki-library@7f3a1b2	1100.0	-1.0	100.0	380	discard	nkilib attention_tkg wrong regime
+c1555	borrow	borrowed	kernel	vllm@a1b2c3d	1555.8	0.62	100.0	455	keep	BF16 QK PV softmax
+c4071	borrow	borrowed	kernel	flashattn@bsd3	4071.1	1.62	100.0	612	keep	NKI flash attention tiling online softmax
+c4102	invent	invented	kernel		4102.0	-1.0	100.0	740	discard	6-way SBUF split under margin
+c4090	invent	invented	kernel		4090.0	-1.0	100.0	700	discard	DMA prefetch restructure
+c4055	invent	invented	kernel		4055.0	-1.0	100.0	690	discard	alt tiling order
+c4269	graph_rewrite		graph		4269.0	1.68	100.0	520	keep	ModelLen O3

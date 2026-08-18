@@ -1,0 +1,57 @@
+# Template: config_prior
+#
+# "For this class of model, start here." The proposer uses these as its
+# opening candidates instead of starting from the autoport default.
+#
+# Copy to: verified/<family>/config-priors/<short-slug>.yaml
+
+lesson_id: REQUIRED-short-kebab-slug
+type: config_prior
+
+applicability:
+  architecture_family: REQUIRED     # dense_causal_lm | moe_causal_lm | diffusion | speech | encoder_only
+  parents_ok: []                    # optional narrowing: [llama, qwen, mistral]
+  param_count_range: [0, 1e12]
+  seq_len_range: [0, 1000000]
+  batch_range: [1, 1024]
+  neuron_sdk_versions: []           # REQUIRED
+
+intervention:
+  kind: config_delta
+  spec:
+    # Only list the axes this lesson actually asserts. Anything omitted is
+    # left to the proposer / autoport default.
+    # tp_degree: 8
+    # cp_degree: 1
+    # weights_dtype: bf16
+    # activations_dtype: bf16
+    # kv_cache_dtype: bf16
+    # attention_kernel: gqa_paged
+    # batching: continuous
+
+evidence:
+  measurements:
+    - model: REQUIRED
+      instance: REQUIRED
+      sdk: REQUIRED
+      shape: chat                   # which benchmark shape (see guardrails.md)
+      batch: 32
+      throughput_tps: REQUIRED
+      before_this_change_tps: REQUIRED   # what we improved on
+      ttft_p50_ms: null
+      hbm_peak_gb: null
+      timestamp: REQUIRED
+
+confidence:
+  n_models_validated: 1
+  architecture_diversity: 1
+  human_verified: false
+
+provenance:
+  authored_by: REQUIRED
+  from_optimizer_run: null
+  source_references: []
+
+expiration:
+  reverify_on_sdk: any_minor_bump
+  last_reverified: null

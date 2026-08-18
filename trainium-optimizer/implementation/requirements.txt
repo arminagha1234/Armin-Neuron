@@ -1,0 +1,12 @@
+# Core dependencies — the backend-independent harness runs on these alone.
+# No Neuron SDK, no AWS, no network needed for the core + mock backend.
+pyyaml>=6.0
+matplotlib>=3.7
+
+# Testing
+pytest>=8.0
+
+# NOTE: the real backends add their own heavy deps (torch, torch_neuronx,
+# neuronx-cc, nki, transformers) which come from the Beta 3 DLC, NOT from pip.
+# See ENVIRONMENT.md section 2. Do not add them here — they are installed by
+# the DLC/driver flow and pinning them in pip would fight the workspace install.

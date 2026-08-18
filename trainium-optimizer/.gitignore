@@ -1,0 +1,45 @@
+# --- secrets: never commit (belt-and-braces; prepare-github.sh also scans) ---
+*.pem
+*.key
+creds*.json
+.env
+.env.*
+*token*
+*secret*
+.aws/
+credentials
+
+# --- run artifacts (regenerable; large; may reference paths) -----------------
+implementation/artifacts/
+artifacts/
+optimization_runs/
+optimized_models/
+*.neff
+*.ntff
+OVERNIGHT_LOG.md
+LEADERBOARD.md
+
+# Keep the committed demo under implementation/examples/ (small, illustrative)
+!implementation/examples/**
+
+# --- model weights: never commit ---------------------------------------------
+*.safetensors
+*.bin
+*.pt
+*.pth
+data/
+weights/
+
+# --- python ------------------------------------------------------------------
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# --- os / editor -------------------------------------------------------------
+.DS_Store
+.idea/
+*.swp

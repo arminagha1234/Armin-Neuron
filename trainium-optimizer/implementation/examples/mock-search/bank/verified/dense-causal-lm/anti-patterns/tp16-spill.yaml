@@ -1,0 +1,28 @@
+lesson_id: tp16-spill
+type: anti_pattern
+layer: config
+migration_risk: medium
+origin: ''
+applicability:
+  architecture_family: dense_causal_lm
+  param_count_range:
+  - 0
+  - 40000000000.0
+  seq_len_range:
+  - 0
+  - 10000000
+  batch_range:
+  - 1
+  - 4096
+  parents_ok: []
+  neuron_sdk_versions:
+  - 2.28.*
+confidence:
+  n_models_validated: 3
+  architecture_diversity: 1
+  human_verified: true
+matcher:
+  tp_degree:
+    gte: 16
+reason: weight spill under 30B; slower than TP=8
+last_reverified_sdk: 2.28.0
