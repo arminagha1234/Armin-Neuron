@@ -19,6 +19,8 @@ header in its source file and a `reference_translation` (or `nki_kernel` with
 | [FlashAttention](https://github.com/Dao-AILab/flash-attention) | BSD-3-Clause | Tiling + online softmax patterns |
 | [TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM) | Apache-2.0 (+ NVIDIA terms) | Fused-kernel patterns — **compliance review required before code borrow** |
 | [AWS Neuron nki-library](https://github.com/aws-neuron/nki-library) | see repo | Harvested production NKI kernels (Stage 0.5) |
+| [jburtoft NKI kernels](https://huggingface.co/jburtoft) / [NeuronStuff](https://github.com/jimburtoft/NeuronStuff) | check per-artifact | Published NKI kernels (DeltaNet/KDA/Mamba, assorted ops) + model ports; harvest/borrow candidates |
+| [neuronx-distributed-inference `contrib/`](https://github.com/aws-neuron/neuronx-distributed-inference) | see repo | Per-architecture worked port recipes (config/sharding/kernels); mined from `contrib/` and PRs |
 | [Autocomp](https://github.com/ucb-bar/autocomp) | see repo | Search architecture (beam + plan/implement); no code copied |
 | internal-prior-optimization-run | private | Optimization techniques (Local-Q, Context Parallel, Local-MoE); trajectory-report format |
 

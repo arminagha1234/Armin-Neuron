@@ -54,6 +54,48 @@ Semantic borrowing only (see `open-questions.md` Q4). Cite in-lesson.
 - optimum-neuron: existing HF↔Neuron bindings
 - text-generation-inference (TGI): production inference patterns
 
+### Jim Burtoft — published Neuron NKI kernels (HIGH VALUE)
+- HF: https://huggingface.co/jburtoft
+- GitHub: https://github.com/jimburtoft/NeuronStuff
+- **Why this is a top-tier borrow source**: a large collection of *already-written
+  NKI kernels* for exactly the hard cases in our seed set and beyond. These are
+  drop-in-or-adapt candidates, not just patterns.
+- Directly relevant to our seeds:
+  - `jburtoft/qwen35-deltanet-neuron-kernels`, `qwen35-deltanet-tkg-full` —
+    **Gated DeltaNet kernels for the Qwen3.5/3.8 hybrid-attention seed.** This
+    is the exact linear-attention case our `hybrid_attention_causal_lm` adapter
+    needs.
+  - `jburtoft/kda-neuron-kernels` — Kimi Delta Attention kernels
+  - `jburtoft/mamba3-neuron-kernels`, `mamba2-ssd-neuron-kernels` — state-space
+    kernels (relevant to any linear/recurrent attention variant)
+  - `jburtoft/minimax-m3-msa-neuron-kernels`, `fnet-*-neuron-kernels`,
+    `gelu-erf-neuron` — assorted op kernels
+  - `Voxtral-Mini-3B-...-draft-4layer`, `whisper-large-v3-medusa-heads` —
+    speculative-decoding / draft-model patterns
+- `NeuronStuff` repo also has full model ports (FLUX.1-lite, Wan2.2, SIGLIP,
+  gemma3, llama33-70b configs, qwen_image_edit, whisper), a
+  `neuronx-benchmark-tool`, `pirl-neuron-optimization`, and
+  `vllm_neuron_configuration_defaults.md` (config priors worth harvesting).
+- License: check per-artifact before a direct code borrow; attribute in-lesson.
+
+### neuronx-distributed-inference (NxDI) `contrib/` — the live port stream
+- Repo: https://github.com/aws-neuron/neuronx-distributed-inference
+- **Watch the PRs, not just `main`.** The `contrib/` model ports land as PRs
+  and are a continuous feed of "how architecture X was made to run on Trn2" —
+  config, sharding, kernels, and (increasingly) device profiling metrics in the
+  READMEs.
+- Recent PRs directly on-point for our roadmap:
+  - Qwen3.6-27B hybrid DeltaNet/GQA + vLLM serving path — **our Qwen seed**
+  - Qwen3-Coder-Next (hybrid DeltaNet + MoE), Qwen3.5-35B-A3B, Qwen3.5-2B
+  - GLM-5.2 (FP8 on trn2.48xlarge), DeepSeek-V3, MiniMax-M3
+  - Gemma-4-26B-A4B (MoE, TP=8, BF16) — adjacent to our Gemma seed
+  - Diffusion/video: Wan 2.2 T2V, Qwen-Image-Edit (TP4×CP4), Cosmos, FlashVSR
+  - "Updating model READMEs with device profiling metrics" (#101) — baseline
+    numbers to diff against
+- How to mine it: `gh pr list --repo aws-neuron/neuronx-distributed-inference
+  --state all` then read the `contrib/<model>/` dir a PR adds. Each is a worked
+  Stage-0/Stage-1 recipe for that architecture.
+
 ### Other worth watching
 - MLC-LLM (Apache 2.0): universal deployment, TVM-based
 - Together AI's open recipes (when they publish them)

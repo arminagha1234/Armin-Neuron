@@ -42,6 +42,7 @@ assumption.** Your instinct here is right.
 | [`nkipy`](https://github.com/aws-neuron/nkipy) | 30 | Rapid prototyping on Trainium. Useful for Stage 4 iteration speed. |
 | [`torch2nki`](https://github.com/aws-neuron/torch2nki) | 3 | Scaling NKI kernels within PyTorch — relevant to the native-PyTorch path |
 | `nki-synthesizer` | 0 | Kernel synthesis. Dormant since Apr 2025, but worth a look given our Stage 4. |
+| [**jburtoft (HF)**](https://huggingface.co/jburtoft) + [**NeuronStuff**](https://github.com/jimburtoft/NeuronStuff) | — | **Published NKI kernels for the hard cases.** `qwen35-deltanet-*` and `kda-neuron-kernels` cover our Qwen3.8 hybrid-attention seed directly; `mamba2/3-*` cover state-space variants; `minimax-m3-msa`, `fnet`, `gelu-erf` are assorted ops. NeuronStuff also has full model ports + `vllm_neuron_configuration_defaults.md`. Check license per-artifact before a direct borrow. |
 
 ### Tier 2 — serving stacks (the optimization target)
 
@@ -150,9 +151,16 @@ Stage 1    CONFIG        ...
    | 2 | Bundled `nkilib` | Compiler-validated, zero install risk |
    | 3 | `nki-library` package (pinned branch) | Newer kernels, compatibility caveat |
    | 4 | `nki-moe` (MoE models only) | Competition-grade MoE kernels |
-   | 5 | `nki-samples`, `nki-llama` | Worked examples, may need adaptation |
-   | 6 | `aws-neuron-samples`, `neuron-workshops` | Config patterns and full pipelines more than kernels |
-   | 7 | External refs (vLLM, SGLang, TRT-LLM, FlashAttention) | Stage 3's corpus — patterns, not drop-ins |
+   | 5 | `jburtoft` HF kernels / `NeuronStuff` | Published NKI kernels for hard cases — DeltaNet/KDA (hybrid-attention seed), Mamba/SSD, assorted ops. Often near-drop-in for the exact architecture. Check license per-artifact. |
+   | 6 | NxDI `contrib/` (incl. open PRs) | Per-architecture worked recipes — config, sharding, sometimes kernels. The Qwen3.6 DeltaNet, GLM-5.2, DeepSeek-V3 ports live here. Mine open PRs, not just `main`. |
+   | 7 | `nki-samples`, `nki-llama` | Worked examples, may need adaptation |
+   | 8 | `aws-neuron-samples`, `neuron-workshops` | Config patterns and full pipelines more than kernels |
+   | 9 | External refs (vLLM, SGLang, TRT-LLM, FlashAttention) | Stage 3's corpus — patterns, not drop-ins |
+
+   Priority 5-6 matter most for the hybrid-attention seed (Qwen3.8): the
+   DeltaNet/KDA kernels on `jburtoft` and the Qwen3.6-DeltaNet port in NxDI
+   `contrib/` are the closest existing work to what that adapter needs, and
+   would otherwise be a Stage-4 invention from scratch.
 
 4. **Emit a harvest manifest** — the inventory, ranked, with shape-constraint
    checks already applied.
