@@ -80,6 +80,15 @@ ORIGIN_MARKER: dict[Origin, str] = {
 # Below this, annotating every gain makes the chart unreadable.
 ANNOTATE_THRESHOLD_PCT = 5.0
 
+# Execution-mode encoding (eager vs torch.compile). Marker-edge ring colors.
+COMPILED_EDGE = "#3fb950"   # bright green ring = torch.compile(backend="neuron")
+EAGER_EDGE = "#6e7681"      # muted grey ring = eager
+
+# First-forward time (seconds) above which we treat a point as compiled when
+# the description carries no explicit compile_mode signal. Eager's lazy build
+# is seconds; a NEFF compile is minutes.
+COMPILE_S_HEURISTIC = 60.0
+
 
 def _fmt_thousands(v: float, _pos: int | None = None) -> str:
     if v >= 1000:
@@ -147,13 +156,45 @@ def build_chart(
     ax.plot(xs, ys, color="#3fb950", linewidth=2, alpha=0.55, zorder=2)
     ax.fill_between(xs, ys, alpha=0.07, color="#3fb950", zorder=1)
 
-    for x, r in zip(xs, kept):
+    # Per-point execution mode (eager vs torch.compile). Only meaningful for
+    # backends that expose a compile_mode axis (native PyTorch); a no-op for
+    # mock/XLA runs that carry no such signal, so those charts are unchanged.
+    modes = _classify_modes(kept) if _mode_signal_present(rows) else [None] * len(kept)
+
+    for x, r, mode in zip(xs, kept, modes):
+        # Compiled points get a bright ring; eager a muted ring. Stage color
+        # stays the fill so all three encodings (stage/provenance/mode) coexist.
+        edge = ("white" if mode is None
+                else COMPILED_EDGE if mode == "compiled" else EAGER_EDGE)
         ax.scatter(
             x, r.metric,
             c=STAGE_COLOR[r.stage],
             marker=ORIGIN_MARKER[r.origin],
-            s=95, zorder=4, edgecolors="white", linewidths=0.6,
+            s=95, zorder=4, edgecolors=edge,
+            linewidths=0.6 if mode is None else 1.8,
         )
+        # Explicit per-point text tag, in the mode's color, just below the point.
+        if mode is not None:
+            ax.annotate(
+                "compiled" if mode == "compiled" else "eager",
+                xy=(x, r.metric), xytext=(0, -13), textcoords="offset points",
+                ha="center", va="top", fontsize=6.5,
+                color=COMPILED_EDGE if mode == "compiled" else EAGER_EDGE,
+                fontweight="bold" if mode == "compiled" else "normal",
+            )
+
+    # Prominent callout on the first eager -> compiled transition (the money jump).
+    for i in range(1, len(modes)):
+        if modes[i] == "compiled" and modes[i - 1] == "eager":
+            prev, cur = kept[i - 1].metric, kept[i].metric
+            pct = (cur / prev - 1.0) * 100.0 if prev > 0 else 0.0
+            ax.annotate(
+                f"torch.compile\n(backend=neuron)\n{'+' if pct >= 0 else ''}{pct:.0f}% vs eager",
+                xy=(i, cur), xytext=(max(0, i - 1.6), cur + max(ys) * 0.09),
+                fontsize=8.5, color=COMPILED_EDGE, fontweight="bold", ha="center",
+                arrowprops=dict(arrowstyle="->", color=COMPILED_EDGE, lw=1.4),
+            )
+            break
 
     # -- discarded candidates, faded -----------------------------------------
     # Placed at the x of the kept row they were competing against, so the
@@ -289,6 +330,18 @@ def build_chart(
         Line2D([], [], marker="x", color="#f85149", linestyle="none",
                markersize=7, label="discarded", alpha=0.5)
     )
+    # Only advertise the eager/compiled ring encoding when it's actually in use.
+    if _mode_signal_present(rows):
+        handles.append(
+            Line2D([], [], marker="o", color="none", markerfacecolor="#8b949e",
+                   markeredgecolor=COMPILED_EDGE, markeredgewidth=1.8,
+                   markersize=8, label="compiled (torch.compile)")
+        )
+        handles.append(
+            Line2D([], [], marker="o", color="none", markerfacecolor="#8b949e",
+                   markeredgecolor=EAGER_EDGE, markeredgewidth=1.8,
+                   markersize=8, label="eager")
+        )
     ax.legend(
         handles=handles, loc="lower right", fontsize=8, frameon=True,
         facecolor="#161b22", edgecolor="#30363d", ncol=3,
@@ -304,6 +357,48 @@ def _nearest_x_for_stage(kept: list[Row], stage: Stage) -> int | None:
     """X position of the last kept row in this stage, for placing failures."""
     idxs = [i for i, r in enumerate(kept) if r.stage is stage]
     return idxs[-1] if idxs else None
+
+
+def _mode_signal_present(rows: list[Row]) -> bool:
+    """True if this run has any compile-mode signal at all. Keeps the eager/
+    compiled labeling native-PyTorch-specific — mock/XLA runs (no compile_mode
+    axis) get no labels and render exactly as before."""
+    for r in rows:
+        d = r.description.lower()
+        if "compile_mode=" in d or "compile-default" in d or "eager" in d:
+            return True
+    return False
+
+
+def _row_mode(desc: str) -> str | None:
+    """Explicit mode from a row's provenance description, or None if it doesn't
+    change the mode (e.g. a tp_degree=8 delta inherits the current mode)."""
+    d = desc.lower()
+    if "compile_mode=compile-default" in d or "compile-default" in d:
+        return "compiled"
+    if "compile_mode=eager" in d:
+        return "eager"
+    return None
+
+
+def _classify_modes(kept: list[Row]) -> list[str]:
+    """Label every kept point eager/compiled by carrying the mode forward along
+    the winning path. Baseline is eager (the native backend's naive start);
+    the mode flips only when a compile_mode candidate is promoted, and later
+    points (tp/dtype changes) inherit whatever mode was in effect."""
+    modes: list[str] = []
+    current = "eager"                      # native baseline is eager
+    for r in kept:
+        explicit = _row_mode(r.description)
+        if explicit is not None:
+            current = explicit
+        elif r.description.strip().lower() == "baseline":
+            current = "eager"
+        elif r.compile_s >= COMPILE_S_HEURISTIC and _row_mode(r.description) is None:
+            # weak fallback: a minutes-long first forward implies a NEFF compile
+            current = "compiled"
+        modes.append(current)
+    return modes
 
 
 def _short_label(desc: str, width: int = 22) -> str:

@@ -35,6 +35,7 @@ assumption.** Your instinct here is right.
 
 | Repo | Stars | What it gives us |
 |------|-------|-----------------|
+| [**Armin-Neuron**](https://github.com/arminagha1234/Armin-Neuron) | — | **Our own native-PyTorch Trn2 ports of the seed models.** `gemma4-31b` (+ `TTFT_OPTIMIZATION_FINDINGS.md`), `qwen3.6-27b-trainium` (full src+test), `qwen3.5-4b-trainium` (device benchmarks + a NKI-vs-eager doc), plus ~25 more ports and an `nki-kernels/` dir. Highest-value warm start for the seeds. Own code → direct borrow fine; re-verify numbers under our harness. |
 | [`nki-library`](https://github.com/aws-neuron/nki-library) | 69 | **The production kernel library.** Bundled into `neuronx-cc` as the `nkilib` namespace — much of it is importable with zero install. See inventory below. |
 | [`nki-samples`](https://github.com/aws-neuron/nki-samples) | 71 | Sample kernels, broader and more pedagogical than nki-library |
 | [`nki-moe`](https://github.com/aws-neuron/nki-moe) | 48 | **MLSys competition for the best MoE NKI kernels.** A corpus of *competitively optimized* MoE kernels. Direct gold for any MoE model. |
@@ -148,6 +149,7 @@ Stage 1    CONFIG        ...
    | Priority | Source | Rationale |
    |----------|--------|-----------|
    | 1 | Knowledge bank `verified/` | Already proven *on Neuron, by us*, with shape constraints recorded |
+   | 1★ | Armin-Neuron own ports | For the seed models only: our own native-PyTorch Trn2 ports (`gemma4-31b`, `qwen3.6-27b`, `qwen3.5-4b`) with device benchmarks + optimization findings. Warm-starts Stage 0/1; re-verify numbers under our harness before they enter a `verified/` lesson |
    | 2 | Bundled `nkilib` | Compiler-validated, zero install risk |
    | 3 | `nki-library` package (pinned branch) | Newer kernels, compatibility caveat |
    | 4 | `nki-moe` (MoE models only) | Competition-grade MoE kernels |

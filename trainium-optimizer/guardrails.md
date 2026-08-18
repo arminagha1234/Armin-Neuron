@@ -218,6 +218,14 @@ but different compiler builds are not comparable.
 
 ### On every SDK release
 
+**Trigger source.** The pass below is kicked off by the
+[Neuron *What's New* / release-notes feed](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/whats-new.html),
+checked at the start of each run. A newer `neuron_sdk` / `neuronx_cc` version
+(or a dated changelog entry we haven't seen) starts the pass. The changelog
+also says *what* changed, which focuses the work: a compiler/kernel entry means
+re-verify kernel lessons first; a new fusion or attention kernel is a candidate
+new config axis (step 3 below).
+
 A re-verification pass, in priority order:
 
 1. **Re-verify the top-N most-consulted bank lessons** (N ~ 50). Re-run the

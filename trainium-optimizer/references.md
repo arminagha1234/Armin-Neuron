@@ -7,6 +7,7 @@ techniques, and prior art. Extends the original `websites_check` note.
 
 ### Official docs
 - [AWS Neuron SDK docs](https://awsdocs-neuron.readthedocs-hosted.com/) — canonical reference
+- [Neuron *What's New* / release notes](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/whats-new.html) — **the release feed, not just docs.** Poll it to detect a new SDK/compiler version *and read what changed*; this is the trigger for the version-stamping + re-verify cadence in `guardrails.md` (new fusion pass or attention kernel → candidate new config axis; compiler change → re-verify kernel lessons first)
 - [NKI programming guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/general/nki/) — kernel authoring
 - [Neuron device security disclosures](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/security.html) — memory-access caveats
 - Neuron ParallelCluster samples — https://github.com/aws-neuron/aws-neuron-parallelcluster-samples
@@ -95,6 +96,29 @@ Semantic borrowing only (see `open-questions.md` Q4). Cite in-lesson.
 - How to mine it: `gh pr list --repo aws-neuron/neuronx-distributed-inference
   --state all` then read the `contrib/<model>/` dir a PR adds. Each is a worked
   Stage-0/Stage-1 recipe for that architecture.
+
+### Armin-Neuron — our own proven Trainium ports (HIGHEST VALUE for the seeds)
+- Repo: https://github.com/arminagha1234/Armin-Neuron (public)
+- **Why this is top-tier**: these are *our own* native-PyTorch Trn2 ports — the
+  exact backend path this framework optimizes — and they cover the seed set
+  directly, with device numbers already recorded.
+- Directly relevant to our seeds:
+  - `gemma4-31b` — **our Gemma seed**, with `TTFT_OPTIMIZATION_FINDINGS.md`
+    (a worked optimization delta, not just a port)
+  - `qwen3.6-27b-trainium` — full `src/` + `test/`, adjacent to the Qwen3.8-27B
+    seed (same family/size class)
+  - `qwen3.5-4b-trainium` — `BENCHMARK_TRN2_3XL/48XL.md`,
+    **`BENCHMARK_NKI_VS_EAGER.md`** (lines up with our eager/compile axis), and
+    `bench_*_sweep.py` scripts
+- Also has `qwen3-30b-a3b`, `glm5.1`, `flux2-klein-*`, `siglip`, `clip`,
+  `bert-embeddings-trainium`, and an `nki-kernels/` dir — a broad port corpus.
+- License: our own code, so direct borrow is fine (per Q22). Still attribute
+  in-lesson with the commit SHA.
+- **Caveat — re-verify, don't trust blind**: the recorded numbers come from a
+  different measurement setup. Treat them as a *warm start* for Stage 0/1, and
+  re-measure under our own harness before a number enters a `verified/` lesson.
+- Neat consequence: once PR #86 merges, this framework lives in the same repo,
+  right next to the ports it harvests from.
 
 ### Other worth watching
 - MLC-LLM (Apache 2.0): universal deployment, TVM-based
