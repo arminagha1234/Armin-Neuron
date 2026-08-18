@@ -1,0 +1,65 @@
+# Template: anti_pattern
+#
+# Records a config region that is known-bad, so the proposer prunes it
+# WITHOUT compiling. Highest-ROI lesson type: each entry saves 5-20 min
+# per pruned candidate per run.
+#
+# Add one whenever a config: underperforms a known alternative, fails to
+# compile, times out, OOMs above the HBM ceiling, or is fast-but-wrong
+# (passes perf, fails equivalence).
+#
+# Copy to: verified/<family>/anti-patterns/<short-slug>.yaml
+
+lesson_id: REQUIRED-short-kebab-slug
+type: anti_pattern
+
+applicability:
+  architecture_family: REQUIRED     # dense_causal_lm | moe_causal_lm | diffusion | speech | encoder_only
+  parents_ok: []                    # optional: [llama, qwen, mistral] — narrows further
+  param_count_range: [0, 1e12]      # [min, max] params this applies to
+  seq_len_range: [0, 1000000]
+  batch_range: [1, 1024]
+  neuron_sdk_versions: []           # REQUIRED e.g. ["2.28.*"] — never leave empty
+
+# Predicate over a candidate config. If it matches, the candidate is
+# dropped before compile. Supports: exact value, {gte:}, {lte:}, {in: []}.
+# Multiple keys are ANDed.
+matcher:
+  # examples — delete what you don't use
+  # tp_degree: {gte: 16}
+  # weights_dtype: fp8
+  # attention_kernel: {in: [dense_naive]}
+
+reason: >
+  REQUIRED. Why this is bad, in a sentence or two. Mechanism if known
+  (spill, collective overhead, numerics blowup, allocator fragmentation).
+  Future-you needs to know whether a compiler fix could invalidate this.
+
+evidence:
+  measurements:
+    - model: REQUIRED                 # hf id or local name
+      instance: REQUIRED              # trn2.3xlarge | trn2.48xlarge | ...
+      sdk: REQUIRED
+      shape: chat                     # which benchmark shape (see guardrails.md)
+      batch: 1
+      outcome: slower                 # slower | oom | compile_timeout | equivalence_fail
+      throughput_tps: null            # fill if outcome=slower
+      comparison_config_tps: null     # the better config we're comparing against
+      timestamp: REQUIRED             # ISO-8601
+
+confidence:
+  n_models_validated: 1
+  architecture_diversity: 1           # count of distinct families this held on
+  human_verified: false
+
+savings:
+  compiles_avoided_estimate: 1        # per optimizer run — used for bank metrics
+
+provenance:
+  authored_by: REQUIRED
+  from_optimizer_run: null            # run id if auto-generated, else null
+  source_references: []               # URLs if the insight came from a reference impl
+
+expiration:
+  reverify_on_sdk: any_minor_bump     # any_minor_bump | any_major_bump | never
+  last_reverified: null               # ISO-8601 date

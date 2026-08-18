@@ -1,0 +1,12 @@
+commit	stage	origin	layer	source	metric	mfu	correctness	compile_s	status	description
+unknown	baseline				603.5	0.67	100.0	297.4299658899897	keep	baseline
+unknown	config		config		2189.6	2.43	100.0	467.05606838239123	keep	prior:dense-31b-continuous-flash
+pruned	config		config		0.0	-1.0	0.0	0.0	discard	pruned: tp16-spill: weight spill under 30B; slower than TP=8
+pruned	config		config		0.0	-1.0	0.0	0.0	discard	pruned: tp16-spill: weight spill under 30B; slower than TP=8
+pruned	config		config		0.0	-1.0	0.0	0.0	discard	pruned: tp16-spill: weight spill under 30B; slower than TP=8
+pruned	config		config		0.0	-1.0	0.0	0.0	discard	pruned: tp16-spill: weight spill under 30B; slower than TP=8
+unknown	config		config		3988.3	4.43	100.0	468.15292025840137	keep	tp_degree=2
+unknown	config		config		7130.7	7.92	100.0	455.4799354864824	keep	tp_degree=4
+unknown	config		config		11108.8	12.34	100.0	486.24973950651906	keep	tp_degree=8
+unknown	config		config		1314.7	1.46	100.0	432.19132541447715	discard	weights_dtype=fp32
+unknown	config		config		3046.7	3.39	100.0	633.4711513485508	discard	weights_dtype=fp8
