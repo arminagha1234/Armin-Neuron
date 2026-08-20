@@ -10,10 +10,11 @@ Config: 480×832, 49 frames, 50 steps, CFG×2 (100 DiT forwards). Prompt: *"a ca
 ## Headline
 - **DiT forward: 9869 ms (naive native eager) → 331 ms** (TP=4) — **~30× via the optimizations below**,
   parity cos 0.9991 vs single-core.
-- **End-to-end: ~134 s** (T5 left on CPU) → **~69 s** with T5 on-device (measured 0.34 s), correctness
-  PASS (decode PSNR 56.7 dB, SSIM 0.9994).
-- **vs the GPU (H100) reference of 33 s:** ~2.1× on device compute (DiT+VAE = 68.9 s). Not GPU-parity on a
-  single chip; a multi-chip trn2.48xl is the path to close that.
+- **End-to-end: 69.3 s (measured), fully on Neuron** — T5 0.704 s + DiT 51.1 s + VAE 15.3 s + export.
+  Correctness PASS (decode PSNR 56.6 dB, SSIM 0.9994). (Text-encode on CPU had inflated this to ~134 s;
+  moving T5 on-device — 0.7 s vs 65 s — was the fix.)
+- **vs the GPU (H100) reference of 33 s: ~2.1×** on one chip. The remaining gap is DiT denoise (compute-
+  bound at 511 ms/fwd) + VAE; a multi-chip trn2.48xl is the path to close it.
 
 ## Example output
 ![Example frame — Wan 2.2 TI2V-5B on Trainium2](results/A_exact_nocache/frame_nocache_mid.png)
@@ -22,11 +23,16 @@ Config: 480×832, 49 frames, 50 steps, CFG×2 (100 DiT forwards). Prompt: *"a ca
 TeaCache variants are in `results/`.*
 
 ## Measured configurations (see `results/` for videos + frames)
-| Config | DiT+VAE | Full e2e | H100 ref | Gap vs H100 (device / e2e) | Fidelity |
-|---|---|---|---|---|---|
-| Exact (TP=4, no cache) | 68.9 s | ~134 s | 33 s | 2.1× / 4.1× | reference, correctness PASS |
-| TeaCache 54% skip | 50.4 s | ~115 s | 33 s | 1.5× / 3.5× | softer (different sample) |
-| TeaCache 74% skip | 31.4 s | ~96 s | 33 s | 0.95× / 2.9× | hazy (un-calibrated) |
+All stages run on Neuron (T5 text-encode included, 0.704 s on-device).
+
+| Config | Full e2e (all on Neuron) | H100 ref | Gap vs H100 | Fidelity |
+|---|---|---|---|---|
+| Exact (TP=4, no cache) | **69.3 s** (measured) | 33 s | 2.1× | reference, correctness PASS |
+| TeaCache 54% skip | ~53 s | 33 s | 1.6× | softer (different sample) |
+| TeaCache 74% skip | ~34 s | 33 s | ~1.0× (≈ parity) | hazy (un-calibrated) |
+
+*No-cache was re-run end-to-end (69.3 s, measured). TeaCache rows = measured DiT+VAE pipe (50.4 s / 31.4 s)
++ the 0.704 s on-device T5 + export. Stage split of the exact run: T5 0.7 s + DiT 51.1 s + VAE 15.3 s.*
 
 ## What made it work (see `docs/OPTIMIZATION_NOTES.md`)
 - **RoPE scatter-free rewrite** — the interleaved rotary embedding's strided index-assignment lowered to

@@ -5,15 +5,15 @@ forwards). Prompt: "a cat playing piano, cinematic." **All numbers are measured 
 
 ## Measured results
 
-| Folder | Config | DiT+VAE | Full e2e | H100 target | Gap vs H100 (device / e2e) | Fidelity |
-|---|---|---|---|---|---|---|
-| **A_exact_nocache** | TP=4, no cache | **68.9 s** | ~134 s | 33 s | **2.1× / 4.1×** | exact, correctness PASS |
-| **B_teacache_54pct** | TP=4 + TeaCache 54% skip | 50.4 s | ~115 s | 33 s | 1.5× / 3.5× | softer, different sample |
-| **C_teacache_74pct** | TP=4 + TeaCache 74% skip | 31.4 s | ~96 s | 33 s | **0.95×** / 2.9× | hazy (un-calibrated) |
+| Folder | Config | Full e2e (all on Neuron) | H100 target | Gap vs H100 | Fidelity |
+|---|---|---|---|---|---|
+| **A_exact_nocache** | TP=4, no cache | **69.3 s** (measured) | 33 s | **2.1×** | exact, correctness PASS |
+| **B_teacache_54pct** | TP=4 + TeaCache 54% skip | ~53 s | 33 s | 1.6× | softer, different sample |
+| **C_teacache_74pct** | TP=4 + TeaCache 74% skip | ~34 s | 33 s | ~1.0× (≈ parity) | hazy (un-calibrated) |
 
-*Gap = our time ÷ H100's 33 s (lower = better; <1× = faster than H100). Device-compute (DiT+VAE) is the
-apples-to-apples accelerator number; full e2e includes T5 text-encode, which was left on CPU here as a
-single-chip memory workaround — on-device T5 is 0.34 s (measured), bringing full e2e to ~69 s.*
+*All stages on Neuron (T5 0.704 s on-device). Gap = our time ÷ H100's 33 s. No-cache was re-run end-to-end
+(69.3 s measured); TeaCache rows = measured DiT+VAE pipe (50.4 s / 31.4 s) + 0.704 s T5 + export. Exact
+run split: T5 0.7 s + DiT 51.1 s + VAE 15.3 s.*
 
 ## Notes
 - **Exact (A)** is the reference. **TeaCache** (step-skipping) trades fidelity for speed; these runs used
