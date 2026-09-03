@@ -13,9 +13,11 @@ step.
 Everything here is self-measured on a Trainium2 instance in native PyTorch mode (no XLA).
 Every number below is observed. Nothing is projected.
 
-**Headline:** the whole of `hc_pre` plus its RMSNorm — statistic, projection, 20-iteration
-sinkhorn, weighted combine, and normalisation — runs as **one kernel**, bit-identical to the
-unfused path, and validated against a float64 reference.
+**Headline:** the entire inter-block transition — `hc_post`, then all of `hc_pre`
+(statistic, projection, 20-iteration sinkhorn, weighted combine), then RMSNorm — runs as
+**one kernel**, bit-identical to the unfused path and validated against a float64 reference.
+That transition happens **86 times per decoded token**, and the fused kernel is
+**1.20–1.23x** faster than the two-kernel path it replaces.
 
 ---
 
@@ -65,13 +67,25 @@ Two facts about this graph drove every decision:
 
 1. **Nothing external is consumed after `x_flat`.** Every step feeds only the next. So the
    entire chain is legally fusable into one kernel.
-2. **`hc_post` cannot join it.** `hc_post` *produces* the `x_flat` that this kernel consumes,
-   so it belongs to the previous boundary. That is the real limit on how far fusion goes, and
-   it is structural rather than an implementation gap.
+2. **The only real barriers are attention and the FFN.** Those are large separate kernels and
+   nothing fuses across them. Everything *between* two blocks is fusable.
 
-I initially got (2) too broad and wrote down that the sinkhorn was a hard barrier splitting
-every boundary in two. It splits *across* boundaries, not *within* one — and noticing that is
-what made the final single-kernel version possible.
+I got (2) wrong twice before getting it right, and both errors were of the same kind —
+mistaking *where a stage belongs* for *what it depends on*:
+
+* First I wrote that the sinkhorn was a hard barrier splitting every boundary in two. It
+  splits *across* boundaries, not *within* one. Noticing that produced increment 5.
+* Then I wrote that `hc_post` could not join, because it *produces* the tensor `hc_pre`
+  consumes. But the layer's forward pass is `hc_post` → (residual carry) → `hc_pre` → norm,
+  with nothing external in between, so it fuses forward perfectly well. That produced
+  increment 7, which is the biggest win in this folder.
+
+The reachable unit is therefore the whole transition between two blocks:
+
+```
+attn/ffn out ──▶ hc_post ──▶ hidden ──▶ hc_pre ──▶ RMSNorm ──▶ next block
+              \________________ one kernel ___________________/
+```
 
 ---
 
@@ -89,6 +103,8 @@ enqueue cost and reports impossible speedups.
 | 2 | combine + RMSNorm | 238.3 us | 243.4 us | **1.21x** / **1.34x** |
 | 3 | + sinkhorn | 372.7 us | 380.7 us | **1.40x** / **1.45x** |
 | 5 | + statistic + projection (**all of `hc_pre`**) | 443.0 +- 6.6 us | 438.7 +- 5.0 us | **1.154 +- 0.044x** / **1.177 +- 0.015x** |
+| 6 | `hc_post` on its own (the expand side) | 254.2 us | 313.1 us | — (baseline for 7) |
+| 7 | **`hc_post` + `hc_pre` + RMSNorm** | 516.8 +- 12.3 us | 528.4 +- 10.7 us | **1.201 +- 0.032x** / **1.229 +- 0.051x** |
 
 Increment 5 is reported with error bars because a single run of it is not trustworthy — see
 "the measurement that nearly fooled me" below. Those figures are 7 repetitions of 20 iterations,
@@ -220,6 +236,8 @@ does not tell you which problem you have.
 | `nki_hc_sinkhorn_fused.py` | increment 3 — sinkhorn + combine + RMSNorm |
 | `nki_hc_matmul_head.py` | increment 4 — RMS statistic + projection (tensor engine), both transpose paths |
 | `nki_hc_pre_full.py` | increment 5 — all of `hc_pre` + RMSNorm in one kernel |
+| `nki_hc_post.py` | increment 6 — `hc_post`, the expand side |
+| `nki_hc_block_transition.py` | increment 7 — `hc_post` + `hc_pre` + RMSNorm, the full transition |
 | `test_*.py` | per-increment validation and A/B benchmarks |
 | `repeat_hc_pre_full.py` | repeatability harness — interleaved, repeated, reports mean +- stdev |
 | `sim_gate_hc.py` | simulator gate, run at both logical-core configurations |
@@ -250,6 +268,6 @@ particular logical-core pairing.
 * **No multi-device result.** Every measurement is single-core. A collective at the real serving
   world size, with per-rank sharded weights, is a separate gate that these runs do not satisfy —
   and passing simulator and small-scale tests is not a substitute for it.
-* **`hc_post` is still torch.** It is the one remaining stage of the hyper-connection path
-  outside NKI, and for the dependency reason above it needs its own kernel rather than joining
-  this one.
+* **The whole hyper-connection path is now NKI, but only as kernels.** Every stage
+  (`hc_post`, statistic, projection, sinkhorn, combine, norm) has a validated kernel, and the
+  full transition is fused into one. None of it is wired into the model yet.
