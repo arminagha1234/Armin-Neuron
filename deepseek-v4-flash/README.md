@@ -5,12 +5,18 @@ Getting **DeepSeek-V4-Flash** (284B MoE, 43 layers) to *decode* on a single
 
 Prefill (TTFT) on this model was already reachable. **Batched decode was not**, and
 that is the part that actually determines serving throughput. This folder is the
-field notes from making decode work: two hard ceilings that are easy to mistake for
-bugs in your own code, and one architectural dead end that looked promising and
-wasn't.
+field notes from making decode work: four ceilings that are easy to mistake for bugs in
+your own code, and one architectural dead end that looked promising and wasn't.
 
 Everything below is **self-measured** on the public `pytorch-inference-vllm-neuronx`
-container. Nothing is projected unless labelled `PROJECTION`.
+container. Every number is an observed measurement — there are no projections left in
+this document. Where an earlier extrapolation existed it is kept only to compare
+against the value that replaced it.
+
+**Headline:** full 43-layer batched decode at **22.25 tok/s** (TP=32, batch 8), with the
+greedy first token matching the golden argmax. Four distinct ceilings had to be cleared
+to get there, and each is written up below with the error it produces, because all four
+are easy to mistake for bugs in your own code.
 
 ---
 
@@ -58,12 +64,32 @@ Batch 1 reproduced at `GEN=8` (39.14) and `GEN=32` (38.91), so the figure is sta
 | 12 | 8 | pass | 75.80 | 105.5 ms |
 | 12 | 16 | pass | **82.54** | — |
 | 24 | 8 | **HBM OOM** | — | — |
-| 43 | 32 | in progress | — | — |
+| 43 | 32 | pass | **22.25** | 449.7 ms |
 
 Depth scaling is **slightly superlinear** — 3x the layers costs 3.4x the time
-(~9.3 ms/layer fitted). That gives `PROJECTION: ~20 tok/s at 43 layers, batch 8`,
-above a 15 tok/s target. It is an extrapolation from two points; the full-depth run
-is the real number.
+(~9.3 ms/layer fitted). Extrapolating from 4 and 12 layers predicted ~20 tok/s at full
+depth; the measured value is **22.25**, so the extrapolation was ~11% pessimistic.
+
+### Full depth (43 layers, TP=32, batch 8)
+
+```
+ttft = 6921.5 ms    t_gen = 18.067 s    load+compile = 3020.9 s
+decode      = 22.25 tok/s   (prefill-excluded, steady state)
+aggregate   = 12.62 tok/s   (includes prefill, GEN=32)
+first token = 4256          golden argmax MATCHED
+```
+
+Both figures are reported deliberately. `22.25` is the steady-state decode rate, which
+is what serving throughput tracks. `12.62` folds the 6.9 s prefill into only 32
+generated tokens; it converges toward the decode rate as generation lengthens. Quoting
+only the aggregate understates decode, and quoting only decode ignores that prefill is
+real work — so both are here.
+
+**The correctness gate.** Every shallower number above comes from a truncated model
+whose output distribution is degenerate, so greedy argmax flips under floating-point
+noise and cannot be validated. At full depth the first generated token is `4256`,
+matching the golden argmax on every sequence in the batch. That is the only correctness
+claim in this folder that covers the whole network.
 
 ---
 
@@ -110,9 +136,10 @@ sharding gives each rank whole groups:
 n_local_groups = o_groups // world_size      # 8 // 16 == 0  -> ZeroDivisionError
 ```
 
-That caps TP at 8. On a `trn2.48xlarge` (32 logical cores under LNC=2) you then get
-only 8 cores' worth of HBM — and **that is what made 24 layers die with
-`nrt_tensor_allocate`** (HBM exhaustion), which in turn makes 43 layers impossible.
+That caps TP at 8. A `trn2.48xlarge` under LNC=2 exposes **64 logical cores** (16
+devices x 4), so capping at 8 leaves you a small fraction of total HBM — and **that is
+what made 24 layers die with `nrt_tensor_allocate`** (HBM exhaustion), which in turn
+makes 43 layers impossible.
 So it looks like an efficiency nit and is actually a does-it-fit blocker.
 
 ### The fix, and why it is valid
@@ -154,6 +181,103 @@ projection weights.
 
 ---
 
+## Ceiling 3 — the KV pool crowds out collective buffers
+
+Reaching full depth surfaced a failure that looks like a model-too-big problem and
+isn't:
+
+```
+Could not load the model status=4 message=Allocation Failure
+NRT:nrt_load_collectives   Failed to load collectives for model.
+```
+
+Weights loaded fine — all 43 layers. It died allocating **collective buffers**. The
+cause is that vLLM sizes the KV cache to fill whatever device memory is free, and at
+full depth there is very little slack left after weights:
+
+| what | tokens of KV |
+|---|---|
+| auto-sized (1464 blocks x 32) | 45,768 |
+| actually needed (8 seqs x 552) | **4,416** |
+| capped (256 blocks) | 7,437 |
+
+Roughly **10x more KV than the workload uses**, and the excess left nothing for the
+collectives. Capping the block count fixes it and costs nothing, because the pool was
+never being used:
+
+```python
+num_gpu_blocks_override = 256      # blocks, not tokens; block_size=32 here
+```
+
+**One trap worth naming.** The obvious companion knob is
+`gpu_memory_utilization`, and lowering it makes things *worse*:
+
+```
+Computed KV cache budget is below minimum threshold.
+effective=0.00 GiB, minimum=1.00 GiB
+```
+
+At 0.6 the budget computed to **zero**, because weights alone already exceed 60% of
+device memory. The two knobs act at different stages — utilization gates a *budget
+check* that runs first, while the block override caps the *actual allocation* later.
+So the working combination is **default (high) utilization together with an explicit
+block cap**: the check passes, and the pool still stays small.
+
+---
+
+## Ceiling 4 — a cold compile at high TP dies at the collective barrier
+
+At TP=32, a cold compile reliably fails near the end:
+
+```
+RuntimeError: Operation timed out!
+[gloo/transport/tcp/pair.cc] Connection closed by peer
+RuntimeError: Engine core initialization failed
+```
+
+It got to 64 of 65 graphs before dying — over two hours of compilation, discarded.
+The mechanism is compile-time skew: individual graphs take 350–530 s and ranks do not
+finish together, so a rank that arrives early at a collective barrier waits past the
+deadline while its peers are still compiling.
+
+There is no timeout knob that fixes this (the engine-startup wait is not
+env-tunable in this version). What works is accepting it and **treating bring-up as
+two passes**:
+
+> **Pass 1** compiles and is *expected* to fail at the barrier.
+> **Pass 2** starts with a warm compile cache, every rank skips compilation, all ranks
+> reach the barrier together, and the run completes.
+
+Both full-depth successes here followed exactly that pattern. Once you know it, it is
+a 30-second retry rather than a two-hour mystery. Worth scripting the retry.
+
+---
+
+## A measurement footnote that changes the numbers
+
+The 43-layer figure above is at TP=32, and TP=32 does **not** use the whole machine:
+
+```
+distinct processes holding Neuron devices: 32
+devices with processes:  0 1 2 3 4 5 6 7
+devices 8-15:            idle
+```
+
+Four ranks land on each of the first eight devices, so only **half the devices** — and
+therefore roughly half the aggregate HBM bandwidth — are in play. Since decode is
+weight-DMA-bound, that matters directly: **22.25 tok/s is a half-machine number.**
+
+It also reframes Ceiling 3. The `Allocation Failure` was not really "the KV pool is
+greedy"; it was "we are fitting a ~568 GB model into the ~768 GB belonging to eight
+devices instead of the full complement." The block cap is a valid fix, but raising TP
+attacks the cause.
+
+Worth stating plainly rather than burying: **checking which devices your ranks
+actually occupy is a two-second command, and not doing it cost several hours of
+misdiagnosis here.**
+
+---
+
 ## Sub-projects
 
 - **[`decode-static-shapes/`](decode-static-shapes/)** — making a decode step whose
@@ -186,15 +310,36 @@ every core, and the next launch dies with `The PyTorch Neuron Runtime could not 
 initialized`. Kill workers by their actual process name, and confirm with `neuron-ls`
 that the PID column is empty before relaunching.
 
+**Cap the KV pool, and leave `gpu_memory_utilization` alone.** See Ceiling 3 — the
+default pool is ~10x oversized at full depth and starves the collectives, but lowering
+utilization drives the computed budget to zero.
+
+**Expect the first high-TP compile to fail.** See Ceiling 4 — budget two passes, and
+script the retry so a warm-cache relaunch is automatic.
+
+**Confirm your rank-to-device placement.** `neuron-ls` shows which devices hold
+processes. A TP degree below the logical-core count can silently leave half the devices
+idle, which halves both capacity and bandwidth.
+
 ---
 
 ## Honest status
 
-- Decode **works and batches**, with real measurements at 4 and 12 layers.
-- Full-depth (43-layer) throughput is **not yet measured**. The figure above is an
-  extrapolation from two points.
-- Correctness so far: the static-shape decode rewrite is bit-exact against the
-  reference (130 steps), and the sharding fix agrees on first token across TP degrees.
-  Full-depth golden-token validation is pending the 43-layer run.
-- Neither ceiling is *solved*. Ceiling 1 is worked around by picking viable batch
-  buckets; ceiling 2 is fixed for TP, but ceiling 1 still bounds how far batching goes.
+- Decode **works and batches**, measured at 4, 12 and **43 layers**.
+- Full depth: **22.25 tok/s** decode at TP=32, batch 8 — and the golden argmax matches,
+  so this is a validated full-network result, not just a throughput figure.
+- That number is a **half-machine** result (TP=32 occupies 8 of 16 devices). TP=64 is
+  the obvious next step and is untested here; expect the memory pressure behind
+  Ceiling 3 to ease, and the barrier skew behind Ceiling 4 to get worse with 2x the
+  ranks.
+- Correctness: the static-shape decode rewrite is bit-exact against the reference over
+  130 steps; the sharding fix agrees on first token across TP degrees; and full-depth
+  greedy decode reproduces the golden first token.
+- **No ceiling here is *solved*.** Ceiling 1 is worked around by discovering viable
+  batch buckets empirically. Ceiling 2 is fixed. Ceilings 3 and 4 are worked around
+  with a block cap and a retry. Only Ceiling 1 has a real fix available — moving
+  activations into NKI kernels — and that is not done.
+- Expert parallelism is **off** (`ep_degree=1`), so all experts sit on every rank with
+  only the intermediate dimension sharded. At TP=32 that is 2048/32 = **64 columns per
+  rank**, a very thin GEMM. Enabling EP would widen it substantially and is the most
+  promising untested lever after TP.
