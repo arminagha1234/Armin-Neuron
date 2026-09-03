@@ -288,6 +288,14 @@ misdiagnosis here.**
   you spend a week on it: an FP4 expert GEMM that is numerically correct on device and
   **85x slower** than bf16, for an architectural reason.
 
+- **[`hyper-connection-fusion/`](hyper-connection-fusion/)** — collapsing the model's
+  hyper-connection boundary (which runs **172 times per decoded token**) from several
+  small ops into **one NKI kernel**, one stage at a time, measuring at every step. Ends
+  with all of `hc_pre` plus its RMSNorm in a single kernel, bit-identical to the unfused
+  path. Also contains a worked example of a benchmarking mistake: a single-sample
+  measurement that produced a confident conclusion the repeated measurement then
+  retracted.
+
 ---
 
 ## Reproduction notes
@@ -338,7 +346,11 @@ idle, which halves both capacity and bandwidth.
 - **No ceiling here is *solved*.** Ceiling 1 is worked around by discovering viable
   batch buckets empirically. Ceiling 2 is fixed. Ceilings 3 and 4 are worked around
   with a block cap and a retry. Only Ceiling 1 has a real fix available — moving
-  activations into NKI kernels — and that is not done.
+  activations into NKI kernels — and that work has now **started** but is not finished:
+  see [`hyper-connection-fusion/`](hyper-connection-fusion/), where one whole
+  hyper-connection boundary is now a single validated kernel. Those kernels are
+  validated **standalone** and are not yet wired into the model's forward pass, so no
+  ceiling has moved and no token/s figure here changes because of them.
 - Expert parallelism is **off** (`ep_degree=1`), so all experts sit on every rank with
   only the intermediate dimension sharded. At TP=32 that is 2048/32 = **64 columns per
   rank**, a very thin GEMM. Enabling EP would widen it substantially and is the most
