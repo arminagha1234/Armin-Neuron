@@ -3,12 +3,31 @@
 Field notes from clearing the native-PyTorch (no-XLA) decode path for DeepSeek-V4-Flash
 through vLLM-Neuron, on a `trn2.48xlarge`. Everything below is self-measured.
 
-**Headline:** we cleared **15 concrete blockers** in the software stack and reached actual
-compilation of the whole 43-layer decode graph. The last blocker is a compiler internal
-error that only the compiler team can fix; the workaround (different TP shape) ran clean
-but was killed by a platform-level active-deadline before finishing. So the native path is
-now a *known-shape* problem, not a mystery. This document is the writeup so nobody has to
-walk the same 15 doors again.
+**Headline: it works.** All **15 blockers** are cleared and the full 43-layer decode graph
+now compiles *and executes* on the native-PyTorch path, with the golden argmax matching the
+XLA reference. Blocker 15 looked for a long time like a compiler bug that only the compiler
+team could fix. It was not. It was a **single missing configuration flag**: `ep_degree=8`.
+
+Measured, 43 layers, `backend=neuron_native`, no XLA, TP=32, EP=8, batch=1, prefill 512,
+GEN=32 — reproduced on three independent runs:
+
+| run | decode tok/s | TTFT | golden token | `NCC_ITIN902` |
+|---|---|---|---|---|
+| 1 | 8.92 | 219.9 ms | PASS (4256) | 0 |
+| 2 | 6.93 | 221.6 ms | PASS (4256) | 0 |
+| 3 | 8.56 | 220.2 ms | PASS (4256) | 0 |
+
+TTFT is stable to ±1 ms while decode spreads 6.9–8.9 tok/s, so treat **~8 tok/s ± 1** as the
+batch=1 figure; the spread is host-side noise, not model variance.
+
+**This number is not comparable to the 22.25 tok/s XLA baseline** — that baseline is batch=8
+and this is batch=1. Decode is weight-bandwidth-bound, so batching amortises the per-step
+weight read and moves throughput by more than an order of magnitude. A batch=8 native
+measurement is the correct comparison and is not included here yet. No tuning has been
+applied either: sliding-window attention, CTE block-size, and the bf16-matmul/f32-accumulator
+work are all still on the table.
+
+This document is the writeup so nobody has to walk the same 15 doors again.
 
 For reference the XLA path is done and published — 43 layers, TP=32, batch 8, prefill
 512 tokens, GEN=32 → **22.25 tok/s decode, golden argmax matched.** See the sibling
@@ -37,7 +56,7 @@ model at native mode will meet the same wall.
 | 12 | `TypeError: parallel_trace() got an unexpected keyword argument 'native_compile_only'` — all 64 workers die identically after loading all 43 layers | vllm-neuron 0.24 calls `parallel_trace(..., native_compile_only=True)`; the installed lite wheel's `parallel_trace` signature does not accept that kwarg (same "native lite wheel" gap as blocker 11) | `VLLM_NEURON_DISABLE_PARALLEL_TRACE=1` — this is the **documented native fallback** per vllm-neuron's own source: `_run_parallel_trace_jobs` returns False before ever calling `parallel_trace`, and `_extract_graphs` takes the sequential path that's explicitly labeled "native fallback deliberately does no extraction here — parent warmups retrace each bucket, compile StableHLO sequentially, and execute on NRT" |
 | 13 | `RuntimeError: Model warmup failed for {prefill,decode} ... when making fake tensor call` — dynamo graph break `gb4315` in three sites in `vllm_neuron/functional/moe/moe_blockwise.py` | `torch.tensor([python_scalar], device=device)` cannot be lowered under fake-tensor tracing (Dynamo can't materialise a real tensor from Python data in fake mode); `_build_blockwise_mapping_kernel` has this call in **at least three branches**, each surfacing on a different warmup path (prefill / decode sharded / decode unsharded) | AST-based patch that rewrites **every** `torch.tensor([scalar])` call in the file to `torch.full((1,), scalar)`, which has an equivalent FX lowering rule that respects fake tensors. Local self-test confirmed the rewriter is scoped: it does not touch multi-element lists, and does not touch non-`torch.tensor(...)` calls |
 | 14 | `WorkloadInterrupted-137-OOMKilled` — pod SIGKILLed 60+ min into compile with 95%+ memory | `VLLM_NEURON_PARALLEL_COMPILE_WORKERS` is **per-worker**; at TP=64 with default 6 this yields up to 384 concurrent `neuronx-cc` processes on the host; peaked at 1.9 TB of 2 TB | `PARALLEL_COMPILE_WORKERS=1` **and** either drop to TP=32 (halves worker count so ~32 cc procs, ~820 GB peak, comfortable) or accept TP=64 with the memory headroom being tighter |
-| 15 | `[NCC_ITIN902] TensorInitialization error: idx i_shard_68001: AffineIV doesn't appear in params or loopnest — Please open a support ticket` | **Neuron compiler internal invariant violation** during decode graph compile. Not user code — same model compiles fine in XLA mode | (open) partial workaround below |
+| 15 | `[NCC_ITIN902] TensorInitialization error: idx i_shard_68001: AffineIV doesn't appear in params or loopnest — Please open a support ticket` | **Not a compiler bug.** `build_blockwise_mapping`'s decode path loops `ceil(num_local_experts / 2)` times, issuing one indirect DMA per iteration into a buffer that carries no shard dimension. With no expert parallelism `num_local_experts = 256`, so that is 128 iterations — deep enough for the LNC shard-axis pass to attach an *equality* predicate on a shard induction variable, which the predicate-widening step cannot represent, so the ISL lowering fails | **`ep_degree=8`.** `num_local_experts` becomes 32, the loop becomes 16 iterations, and the predicate never forms |
 
 ### The deterministic-failure abort loop
 
@@ -51,47 +70,66 @@ debugging tolerable.
 
 ---
 
-## Where the wall is
+## How blocker 15 was actually cleared
 
-Blocker 15 is a `neuronx-cc` internal error. `AffineIV doesn't appear in params or loopnest`
-is a compiler IR invariant, not user-facing. The compiler emits this on the DECODE graph at
-TP=32 (128-way sharded expert tensors, high shard indices), and the error message itself
-tells you to file a support ticket. The same model compiles cleanly in XLA mode, so the bug
-is specific to the graph shape produced by the native backend.
+`ITIN902` reports a *shard* induction variable — `i_shard_68001`. Those exist only because
+the LNC=2 sharding passes create them. The chain is:
 
-Two workarounds were tried:
+1. an in-graph indirect **write** becomes an LNC scatter DMA;
+2. the shard-axis pass attaches an **equality** predicate relating a loop IV to the shard IV;
+3. predicate projection can widen inequalities but leaves equalities intact, so the shard IV
+   survives into the ISL lowering, which can only represent loop-nest dimensions and SPMD
+   parameters;
+4. it is in neither, so the lowering raises.
 
-1. **TP=64.** Different sharding pattern → different graph shape → *might miss the compiler
-   pass that triggers the bug*. Result: **compile ran completely clean for 2h50m with zero
-   errors of any kind** — no `ITIN902`, no OOM, no traceback. But the runner's
-   active-deadline TTL killed the workload before compilation finished. At TP=64 there
-   are twice as many
-   subgraphs (128 vs 64 for TP=32), so the compile takes ~2x longer, and it exceeded the
-   platform's per-workload wall clock.
+The indirect write is in the MoE blockwise mapping. Its decode path loops
+`ceil(num_local_experts / 2)` times, one indirect DMA per iteration, into a buffer allocated
+full-size on every core — so the store has no shard dimension to hang the predicate on.
 
-2. **TP=32 with `NEURON_CC_FLAGS="--enable-saturate-infinity --disable-internal-io-dge"`.**
-   Attempted after run 9 was TTL'd. Not verifiable in this session because subsequent
-   workload starts in the same region hung immediately at container step 1 (`import torch`)
-   for over 30 minutes with no output; three consecutive relaunches showed identical
-   symptoms. This was a platform / regional issue that emerged after run 9 and coincided
-   with a service-side `ExpiredTokenException` on the platform's exec API. Not a code
-   issue, not reproducible in the pattern of user errors.
+`num_local_experts = n_routed_experts / ep_degree`. With no expert parallelism that is
+256 experts and **128 iterations**. With `ep_degree=8` it is 32 experts and **16 iterations**,
+and the failing predicate never gets created.
 
-### What would actually unblock it
+That is the whole fix. One flag.
 
-- **Fix the compiler bug.** File a support ticket with the reproducer (this is a small
-  shape variation; the graph that hits ITIN902 is a straightforward TP=32 decode of a
-  256-expert MoE with sharded expert weights).
-- **Or extend the platform active-deadline** on the workload runner so TP=64 compile has
-  time to finish. Its progress was on-track and error-free; it wants ~4-5h of runtime
-  rather than the ~3h it got.
-- **Or ship the "native lite wheel"** referenced by vllm-neuron's own source (blockers 11
-  and 12). Its `parallel_trace` supports `native_compile_only` and would enable the fork
-  pool, which means compile can parallelise across workers rather than run sequentially in
-  each worker's process — potentially bringing the compile time inside the current TTL.
-  Right now the wheel on the package index does not include this.
+### The controlled result
 
----
+| configuration | outcome |
+|---|---|
+| TP=32, **EP=8**, 43 layers | **3 / 3 SUCCEEDED**, golden token matched, zero `ITIN902` |
+| TP=32, **no EP** | **0 / 3** — `ITIN902` ×226, always the same `i_shard_68001` |
+
+### What was ruled out first, and why it is worth knowing
+
+Three plausible theories were tested and each was disproved by the *same* piece of evidence:
+the failing index never moved.
+
+- **Rewriting every in-graph `scatter_`.** All 186 live indirect writes per decode step were
+  converted to `arange == idx` broadcast-compare plus `torch.where`, verified bit-exact
+  against the originals on CPU across five shape configurations per site. The failing index
+  was unchanged. Worth keeping as a cleanliness win; it was not this bug.
+- **Upgrading the compiler.** `neuronx-cc` 2.27.5334.0 installs and verifies cleanly over
+  2.27.2878.0. The failing index was unchanged.
+- **Forcing the sharded mapping branch on decode** (`tp_degree` instead of `1`). 0/3, and that
+  line turns out to be a deliberate, measured optimisation rather than a defect.
+
+If an index like `i_shard_68001` is *bit-stable* across changes that substantially alter graph
+structure, the thing you changed is not the cause. That signal would have saved several hours
+had it been trusted earlier.
+
+### Side benefits of EP=8
+
+Not just a compile fix. Each rank holds 1/8 of the expert weights, so per-rank peak host
+memory dropped from roughly 780 GB to about 300 GB, and weight load fell from ~45 min to
+~25 min. It also cuts decode weight-bandwidth per rank, which is the dominant term at
+batch=1.
+
+### One caveat that cost a run
+
+At batch=8 an over-provisioned `num_gpu_blocks_override=1024` failed at prefill warmup with
+`NRT_RESOURCE`. The graph **compiled**; this was purely allocation. KV cache, the prefill
+NEFF, the decode NEFF and the weights must all coexist in HBM, and batch=8 only needs
+~4.4k token slots. Leave the block count unset and let the serving stack size it.
 
 ## What is *not* the wall
 
