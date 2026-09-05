@@ -1,0 +1,98 @@
+{
+  "shape": "~3500in/50out",
+  "endpoint": "chat",
+  "single": [
+    {
+      "ttft_s": 0.2499,
+      "ntok": 15,
+      "total_s": 9.1186,
+      "decode_tok_s": 1.58
+    },
+    {
+      "ttft_s": 0.9031,
+      "ntok": 15,
+      "total_s": 9.7707,
+      "decode_tok_s": 1.58
+    },
+    {
+      "ttft_s": 0.9032,
+      "ntok": 15,
+      "total_s": 9.7727,
+      "decode_tok_s": 1.58
+    }
+  ],
+  "concurrency": [
+    {
+      "conc": 1,
+      "wall_s": 9.776,
+      "ok": 1,
+      "rps": 0.102,
+      "agg_out_tok_s": 5.11,
+      "avg_lat_s": 9.775
+    },
+    {
+      "conc": 4,
+      "wall_s": 10.437,
+      "ok": 4,
+      "rps": 0.383,
+      "agg_out_tok_s": 19.16,
+      "avg_lat_s": 10.436
+    },
+    {
+      "conc": 8,
+      "wall_s": 11.312,
+      "ok": 8,
+      "rps": 0.707,
+      "agg_out_tok_s": 35.36,
+      "avg_lat_s": 11.31
+    },
+    {
+      "conc": 16,
+      "wall_s": 13.076,
+      "ok": 16,
+      "rps": 1.224,
+      "agg_out_tok_s": 61.18,
+      "avg_lat_s": 13.072
+    },
+    {
+      "conc": 32,
+      "wall_s": 26.111,
+      "ok": 32,
+      "rps": 1.226,
+      "agg_out_tok_s": 61.28,
+      "avg_lat_s": 17.821
+    },
+    {
+      "conc": 48,
+      "wall_s": 39.132,
+      "ok": 48,
+      "rps": 1.227,
+      "agg_out_tok_s": 61.33,
+      "avg_lat_s": 22.575
+    },
+    {
+      "conc": 64,
+      "wall_s": 42.726,
+      "ok": 64,
+      "rps": 1.498,
+      "agg_out_tok_s": 74.9,
+      "avg_lat_s": 27.751
+    },
+    {
+      "conc": 96,
+      "wall_s": 68.777,
+      "ok": 96,
+      "rps": 1.396,
+      "agg_out_tok_s": 69.79,
+      "avg_lat_s": 37.876
+    },
+    {
+      "conc": 128,
+      "wall_s": 85.293,
+      "ok": 128,
+      "rps": 1.501,
+      "agg_out_tok_s": 75.04,
+      "avg_lat_s": 47.932
+    }
+  ]
+}

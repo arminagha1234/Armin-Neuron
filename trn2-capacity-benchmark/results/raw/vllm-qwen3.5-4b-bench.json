@@ -1,0 +1,62 @@
+{
+  "shape": "2000in/50out",
+  "single": [
+    {
+      "s": 6.3835,
+      "usage": {
+        "prompt_tokens": 1877,
+        "total_tokens": 1927,
+        "completion_tokens": 50,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "s": 5.79,
+      "usage": {
+        "prompt_tokens": 1877,
+        "total_tokens": 1913,
+        "completion_tokens": 36,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "s": 6.4078,
+      "usage": {
+        "prompt_tokens": 1877,
+        "total_tokens": 1927,
+        "completion_tokens": 50,
+        "prompt_tokens_details": null
+      }
+    }
+  ],
+  "concurrency": [
+    {
+      "conc": 1,
+      "wall_s": 6.376,
+      "ok": 1,
+      "rps": 0.157,
+      "avg_lat_s": 6.376
+    },
+    {
+      "conc": 2,
+      "wall_s": 12.744,
+      "ok": 2,
+      "rps": 0.157,
+      "avg_lat_s": 9.56
+    },
+    {
+      "conc": 4,
+      "wall_s": 25.484,
+      "ok": 4,
+      "rps": 0.157,
+      "avg_lat_s": 15.933
+    },
+    {
+      "conc": 8,
+      "wall_s": 50.961,
+      "ok": 8,
+      "rps": 0.157,
+      "avg_lat_s": 28.678
+    }
+  ]
+}
