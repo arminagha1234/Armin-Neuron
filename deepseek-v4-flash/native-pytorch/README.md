@@ -12,17 +12,35 @@ compiler team could fix. It was a single missing configuration flag.
 
 ## Measured
 
-43 layers, `backend=neuron_native`, TP=32, EP=8, batch 1, prefill 512, GEN=32.
-Three independent runs, same payload:
+> **Correction, 2026-09-05.** An earlier version of this page reported ~8 tok/s. That
+> number was wrong by roughly 10x and is retracted. The benchmark divided by the
+> *requested* token count (`GEN=32`) while the model emitted EOS after 4 tokens, so it
+> credited 31 decode steps to the duration of 3. The harness now passes `ignore_eos=True`
+> and divides by tokens actually produced. Corrected figures below. The correctness
+> result was never affected by this.
 
-| run | decode tok/s | TTFT | golden token | `NCC_ITIN902` |
-|---|---|---|---|---|
-| 1 | 8.92 | 219.9 ms | PASS (4256) | 0 |
-| 2 | 6.93 | 221.6 ms | PASS (4256) | 0 |
-| 3 | 8.56 | 220.2 ms | PASS (4256) | 0 |
+43 layers, `backend=neuron_native`, TP=32, EP=8, batch 1, prefill 512, GEN requested 32,
+**4 tokens actually generated** (`[4256, 51119, 16, 1]` -- the trailing `1` is EOS):
 
-TTFT is stable to about +/- 1 ms while decode spreads 6.9-8.9, so **~8 tok/s +/- 1** is the
-honest figure at batch 1; the spread is host-side noise, not model variance.
+| run | TTFT | t_gen | decode steps | decode tok/s | golden token | `NCC_ITIN902` |
+|---|---|---|---|---|---|---|
+| 1 | 219.9 ms | 3.696 s | 3 | **0.86** | PASS (4256) | 0 |
+| 2 | 221.6 ms | 4.696 s | 3 | **0.67** | PASS (4256) | 0 |
+| 3 | 220.2 ms | 3.843 s | 3 | **0.83** | PASS (4256) | 0 |
+
+Decode is therefore **~0.8 tok/s**, about **1.2 s per step** -- not the 125 ms the retracted
+number implied. TTFT is the one figure that was always sound: it comes from a separate
+single-token generate call, so no token-count assumption enters it, and it is stable to
+about +/- 1 ms.
+
+Two consequences worth stating, because they invalidate analysis built on the bad number.
+A roofline gap argued from a 125 ms step does not transfer to a 1.2 s step: the measured
+32-rank all-reduce cost of ~0.23 ms x ~150 collectives is ~34 ms, which is ~3% of the real
+step rather than the ~28% it would be of 125 ms. And with only 3 decode steps inside one
+`generate()` call, per-token timing is heavily contaminated by fixed per-request overhead,
+so even 0.8 tok/s is a lower bound on a short generation rather than a steady-state rate.
+A long generation with `ignore_eos=True` is the measurement that will actually mean
+something, and it has not been taken yet.
 
 The golden token is the greedy first token for a fixed prompt, and **4256 is the same value
 the XLA path produces**. That is the correctness gate: the native path is not merely
@@ -30,9 +48,11 @@ producing tokens, it is producing the same tokens.
 
 ### What this number is not
 
-- **Not comparable to the XLA path's 22.25 tok/s.** That is batch 8; this is batch 1. Decode
-  here is weight-DMA-bound, so batching amortises a fixed per-step weight read. For scale:
-  the XLA path on this same model measures 1.35 tok/s at batch 1 and 37.81 at batch 128.
+- **Not comparable to the XLA path's 22.25 tok/s.** That is batch 8; this is batch 1. For
+  scale, the XLA path on this same model measures 1.35 tok/s at batch 1 and 37.81 at batch
+  128. The batch-1 XLA figure (1.35) against the corrected native figure (~0.8) is the
+  like-for-like pair, and those are the same order of magnitude.
+- **Batch 8 does not run on this path at all today.** It deadlocks; see below.
 - **Not tuned.** The MoE compute dtype has not been swept.
 - **Not batch-scaled, and there is a ceiling.** Batch 32 does not run at 43 layers: it
   compiles clean (zero `NCC_`) and then fails to *allocate*, at prefill warmup ---
@@ -169,6 +189,96 @@ exactly like profiling being unsupported. It is not. Also worth knowing before y
 profiling costs roughly 20-25% throughput, so the step time must come from an unprofiled
 run and the profile used only for attribution; and with 32 workers there is no rank-scoped
 variable, so the env has to be gated on local rank or you get 32 concurrent captures.
+
+## Batch > 1 deadlocks in the lm-head, not the MoE
+
+Five independent runs at `max_num_seqs` 8 sat for 5.5 hours each and produced nothing.
+They were not slow; they were wedged. All five stopped at the identical log line:
+
+```
+WARNING vocab_sharding_spmd.py:316 ShardIndexInjection: conflicting shard indices {0..31}
+INFO    backend.py:125            Detected collective operation: all_reduce.default
+```
+
+and then emitted only `shm_broadcast: No available shared memory broadcast block found in
+60 seconds` once a minute, forever, with 32 workers spinning at ~11% CPU and **zero**
+compiler processes alive.
+
+That is a 32-rank compile barrier deadlock on a traced graph that contains a collective.
+At batch 1 the graph either isn't produced or doesn't contain one; at batch>1 the
+vocab-sharded lm-head puts an `all_reduce` inside the traced region and the ranks cannot
+all get through. So the batch>1 blocker is in the **lm-head sharding**, not in the MoE,
+which is where I had been looking.
+
+Batch 32 fails differently and earlier -- it compiles clean and then cannot allocate
+(`NRT EXECUTION FAILED: ... Failed to allocate resource` at prefill warmup), i.e. device
+HBM exhaustion. Two distinct blockers, not one.
+
+**A monitoring lesson that cost 27 machine-hours.** A phase classifier that reports
+"tracing" on the absence of an error will call a deadlock healthy indefinitely. The signal
+that separates them is `shm_broadcast` starvation **together with no live compiler
+process** -- the conjunction matters, because starvation messages also appear transiently
+during a perfectly healthy compile (observed: 4 starvation messages while 160 `neuronx-cc`
+processes were running, on a run that went on to succeed).
+
+## The MoE kernel swap: correct, but not faster
+
+Decode now has a second implementation, `_forward_experts_tkg`, which calls the
+token-generation expert kernel with per-token affinities and indices instead of the
+context-encoding kernel with a blockwise mapping. Selected by
+`VLLM_NEURON_V4_DECODE_MOE=tkg|cte`.
+
+**It is correct.** Golden token 4256, matching the XLA path, through an entirely different
+expert kernel with no blockwise mapping and therefore no call into the code path that
+produces `NCC_ITIN902`. Zero `NCC_` of any kind.
+
+**It is not measurably faster**, and the honest reason is that this comparison cannot
+resolve the difference. One run per cell, against a baseline whose own three-run spread is
++/- 14%:
+
+| decode MoE kernel | host CC | decode tok/s (corrected) | golden |
+|---|---|---|---|
+| `moe_tkg` | off | 0.68 | PASS |
+| `moe_tkg` | on | 0.93 | PASS |
+| `moe_cte` (baseline) | off | 0.93 | PASS |
+
+Every value lands inside the baseline's noise band, so no ordering here is supportable.
+What the runs do establish is that the TKG path works end to end and produces identical
+tokens, which makes it a usable foundation rather than a proven win.
+
+I had predicted a large gain on the grounds that the CTE path pads to a 128-token floor at
+decode and then runs ~37 static blocks per layer for one real token. That prediction did
+not survive contact with measurement, and part of the reason is visible in the call itself:
+the CTE path passes `skip_token=True`, which is precisely the mechanism for skipping padded
+token slots. So the padded work was likely already being elided, and the "128x waste"
+framing overstated it.
+
+## Host collective-communication is not required, and the microbenchmark mispredicted
+
+An isolated 32-rank `all_reduce` probe on this image, no model:
+
+| payload | host CC off | host CC on | host CC + `CC_STREAM_SPLIT=7:1` |
+|---|---|---|---|
+| 4 KiB | 0.235 ms | 0.284 ms | 0.284 ms |
+| 64 KiB | 0.241 ms | 0.286 ms | 0.287 ms |
+| 512 KiB | 0.230 ms | 0.299 ms | 0.296 ms |
+| 2048 KiB | 0.225 ms | 0.316 ms | 0.311 ms |
+
+Three things come out of this. The device path **works at TP=32 with host CC off**, so the
+claim in an earlier revision of this page that host CC is what makes native tensor
+parallelism work here is wrong -- the hang it originally "fixed" was environmental, most
+likely orphaned ranks from a killed `torchrun` still holding the cores. Raising the
+collective stream split does not recover host CC's cost, so that cost is not the resource
+split. And latency is flat across a 512x payload range, i.e. these collectives are
+alpha-bound, not bandwidth-bound, so reducing collective *count* is the lever and tuning
+chunk size is not (a 256 KiB chunk measured slightly worse, and
+`INTRA_LATENCY_OPT_MESH_ALG` is rejected outright by the runtime).
+
+The part worth keeping is the negative result about method: in the full model, host CC off
+measured *slower*, the opposite of the microbenchmark's prediction. A 34 ms collective
+budget inside a 1.2 s step is ~3% and simply cannot be seen through +/- 14% run noise. An
+isolated microbenchmark can rank a primitive; it cannot rank a configuration of the whole
+system.
 
 ## Contents
 
