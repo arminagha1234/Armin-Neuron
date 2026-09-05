@@ -12,38 +12,43 @@ compiler team could fix. It was a single missing configuration flag.
 
 ## Measured
 
-> **Correction, 2026-09-05.** An earlier revision of this page reported ~8 tok/s. That was
-> wrong by roughly 4x and is retracted. The benchmark divided by the *requested* token
-> count (`GEN=32`) while the model emitted EOS after 4 tokens, so it credited 31 decode
-> steps to the duration of 3. The harness now passes `ignore_eos=True` and divides by
-> tokens actually produced. Correctness was never affected.
+> **Two corrections, 2026-09-05.** (1) An earlier revision reported ~8 tok/s. The benchmark
+> divided by the *requested* token count (`GEN=32`) while the model emitted EOS after 4
+> tokens, crediting 31 decode steps to the duration of 3. Fixed with `ignore_eos=True` plus
+> division by tokens actually produced. (2) A later revision reported that an alternative
+> MoE decode kernel was 9% slower. **That comparison was invalid** -- the deploy script
+> preferred a stale copy of the model source over the one shipped with the launch, so the
+> runs being compared were byte-identical. Both claims are retracted. Correctness was never
+> affected by either.
 
 43 layers, `backend=neuron_native`, TP=32, EP=8, batch 1, prefill 512, 32 tokens requested
-and **32 actually generated** (`gen_actual=32/32`, 31 decode steps):
+and **32 actually generated** (`gen_actual=32/32`, 31 decode steps). Three runs of the same
+configuration:
 
-| run | decode MoE kernel | decode tok/s | ms/step | TTFT | golden token | `NCC_` |
-|---|---|---|---|---|---|---|
-| 1 | `moe_cte` | **3.71** | 270 | 219.8 ms | PASS (4256) | 0 |
-| 2 | `moe_cte` (repeat) | **3.77** | 265 | 219.5 ms | PASS (4256) | 0 |
-| 3 | `moe_tkg` | **3.37** | 297 | 220.8 ms | PASS (4256) | 0 |
+| run | decode tok/s | ms/step | TTFT | golden token | `NCC_` |
+|---|---|---|---|---|---|
+| 1 | 3.37 | 297 | 220.8 ms | PASS (4256) | 0 |
+| 2 | 3.71 | 270 | 219.8 ms | PASS (4256) | 0 |
+| 3 | 3.77 | 265 | 219.5 ms | PASS (4256) | 0 |
 
-**Decode is ~3.7 tok/s at batch 1, about 270 ms per step.** TTFT is ~220 ms and was the one
-figure never affected by the bug -- it comes from a separate single-token generate call, so
-no token-count assumption enters it.
+**Decode is ~3.6 tok/s +/- 6% at batch 1, about 275 ms per step.** TTFT is ~220 ms and is by
+far the most stable figure (+/- 0.7%), because it comes from a separate single-token generate
+call where no token-count assumption enters.
 
-The measurement lesson is worth as much as the number. Over 31 decode steps the two
-identical `moe_cte` runs differ by **0.8%**. The earlier 3-step measurement had a spread of
-**+/- 14%** across three runs of the same config. Same model, same box -- the difference is
-entirely that a 3-step window is dominated by fixed per-request overhead inside
-`generate()`. That is also why the intermediate 4-token numbers (0.68-0.93 tok/s) understated
-the rate by ~4x in the other direction: short generations are not merely noisy, they are
-biased. Any decode figure taken over a handful of steps should be discarded rather than
-caveated.
+Those three rows were *intended* to be two different MoE kernels plus a repeat. They turned
+out to be the same code three times, which makes them something more useful: an honest
+measurement of run-to-run variance. **+/- 6% is the resolution floor** for a single run of
+this configuration, so no optimisation claiming less than that can be supported without
+repeats.
+
+Note also how badly a short generation misleads, in both directions. The same build measured
+~8 tok/s with the token-count bug and ~0.8 tok/s over 4 real tokens; the truth is ~3.6.
+Short windows inside one `generate()` call are dominated by fixed per-request overhead, so
+they are biased rather than merely noisy, and should be discarded rather than caveated.
 
 The golden token is the greedy first token for a fixed prompt, and **4256 is the same value
-the XLA path produces** -- across all three configurations, including a completely different
-expert kernel. That is the correctness gate: the native path is not merely producing tokens,
-it is producing the same tokens.
+the XLA path produces**. That is the correctness gate: the native path is not merely
+producing tokens, it is producing the same tokens.
 
 ### What this number is not
 
@@ -124,11 +129,11 @@ account for ~34 ms (~13%) and a weight-bandwidth roofline for a further modest s
 most of the step is still unattributed by the things that are supposed to dominate
 memory-bound decode.
 
-Two structural causes were identified by reading the kernel library and the runtime. One of
-them turned out **not** to be the bottleneck when tested -- recorded below rather than
-quietly dropped, because the reasoning looked sound and was still wrong.
+Two structural causes were identified by reading the kernel library and the runtime. The
+first has an implementation but no valid measurement yet, for a reason that is itself the
+most transferable lesson on this page -- see the failure note at the end.
 
-### 1. Decode was running the prefill MoE kernel -- fixed, and it did not help
+### 1. Decode runs the prefill MoE kernel
 
 The MoE library exposes two different expert-compute entry points: a **context-encoding**
 kernel, which takes a blockwise token-to-expert mapping and walks blocks, and a
@@ -152,17 +157,22 @@ The token-generation kernel needs no blockwise mapping, no `token_position_to_id
 mapping call from the decode path entirely --- which is also where the `NCC_ITIN902` compiler
 bug documented above lives.
 
-**Measured result: correct, and ~9% slower** (3.37 vs 3.71 tok/s, against a 0.8% run-to-run
-spread). The reasoning above is accurate about what the two kernels do and still failed to
-predict the outcome, for a reason visible in the original call site: it passes
-`skip_token=True`, which is precisely the mechanism for skipping padded token slots. So the
-padded work was largely already being elided, and the "128x waste" framing overstated it.
-The token-generation path additionally runs with `is_all_expert=True`, which walks all 32
-local experts for every token -- so at batch 1 it trades one form of fixed work for another.
+**Status: implemented, not yet measured.** An earlier revision of this page reported the
+token-generation path as 9% slower. That number is withdrawn: the deploy step preferred a
+stale copy of `model.py` on shared storage over the one shipped in the launch payload, so
+the "before" and "after" runs executed identical code and the difference was ordinary
+run-to-run variance. Details in the failure note below.
 
-The swap is kept behind `VLLM_NEURON_V4_DECODE_MOE=tkg|cte` (default `cte`) because it is a
-verified-correct second implementation, and a better starting point at larger batch where
-walking 32 local experts amortises while CTE block padding does not.
+Two things temper the expected gain even so, and both are worth stating before measuring
+rather than after. The context-encoding call already passes `skip_token=True`, which is
+exactly the mechanism for skipping padded token slots -- so the padded work was probably
+already being elided and the "128x waste" framing above overstates it. And the
+token-generation path runs `is_all_expert=True`, walking all 32 local experts for every
+token, so at batch 1 it may trade one form of fixed work for another. The clearer wins are
+structural rather than arithmetic: the blockwise mapping disappears from decode, and with it
+the call site of the `NCC_ITIN902` compiler bug.
+
+Selected by `VLLM_NEURON_V4_DECODE_MOE=tkg|cte`, default `cte` until it is measured.
 
 
 There is a wrinkle specific to this model. The fused variant that also folds in the RMSNorm
@@ -242,16 +252,53 @@ process** -- the conjunction matters, because starvation messages also appear tr
 during a perfectly healthy compile (observed: 4 starvation messages while 160 `neuronx-cc`
 processes were running, on a run that went on to succeed).
 
-## The decode MoE implementation switch
+## The failure that invalidated two rounds of results
 
-`_forward_experts_tkg` in [`port/model.py`](path-analysis/) is a second decode expert
-implementation selected by `VLLM_NEURON_V4_DECODE_MOE=tkg|cte`. Mechanism, measured result
-and why the prediction was wrong are in "Where the 270 ms goes" above; the short version is
-that it is verified correct (golden token 4256) and about 9% slower at batch 1, so `cte`
-remains the default.
+Worth more than any number on this page.
+
+The deploy step resolved the model source like this:
+
+```bash
+if [ -f "$SHARED/port/model.py" ]; then
+  SRC="$SHARED/port"          # "it is the same content"
+elif [ -f "$PAYLOAD/model.py" ]; then
+  SRC="$PAYLOAD"
+fi
+```
+
+The comment was true when written. It stopped being true the moment the payload was edited,
+and nothing anywhere said so. Three launches shipped a modified `model.py` inside the command
+payload, the shared copy stayed at an older timestamp, and all three ran the old code. Two
+rounds of A/B conclusions were drawn from runs that were byte-identical to each other --
+including a published "9% regression" that was simply variance.
+
+What made it invisible is that every *other* signal looked right. The env var reached the
+container. The launch payload contained the new file. The run completed, passed the golden
+token, and produced a plausible number. The only way to notice was to ask what the deployed
+file actually contained, which nothing prompted.
+
+Three changes, all cheap, any one of which would have caught it:
+
+- **The payload wins.** A launch-supplied artifact takes precedence over cached shared state,
+  and a divergence is reported rather than silently resolved.
+- **Fingerprint the thing that determines the result.** The log now prints the md5 and byte
+  count of the deployed `model.py`, plus a grep count for the specific markers the run is
+  supposed to be testing. A run whose result depends on a source file should say which source
+  file, unprompted.
+- **Echo the knobs after they are derived, not before.** The config line printed
+  `V4_DECODE_MOE=unset` because it ran above the export that sets it -- so the one diagnostic
+  that would have flagged this was itself misleading.
+
+The same class of bug appeared twice more in this work: a defaults line that assigned `V4_*`
+unconditionally and so ignored every value passed in from the launch (a `GEN=128` run
+measured 32 tokens, silently), and a phase classifier that inferred "healthy" from the
+absence of an error and so reported a five-hour deadlock as progress. All three share a
+shape: **a silent fallback to a plausible default.** In an experiment harness, a wrong default
+that runs is more expensive than a hard failure, because it costs the run *and* the
+conclusion.
 
 
-## Host collective-communication is not required, and the microbenchmark mispredicted
+## Host collective-communication is not required at TP=32
 
 An isolated 32-rank `all_reduce` probe on this image, no model:
 
@@ -272,11 +319,18 @@ alpha-bound, not bandwidth-bound, so reducing collective *count* is the lever an
 chunk size is not (a 256 KiB chunk measured slightly worse, and
 `INTRA_LATENCY_OPT_MESH_ALG` is rejected outright by the runtime).
 
-The part worth keeping is the negative result about method: in the full model, host CC off
-measured *slower*, the opposite of the microbenchmark's prediction. A 34 ms collective
-budget inside a 1.2 s step is ~3% and simply cannot be seen through +/- 14% run noise. An
-isolated microbenchmark can rank a primitive; it cannot rank a configuration of the whole
-system.
+**Whether turning it off helps end-to-end is still unmeasured.** An earlier revision of this
+page claimed the full model got *slower* with host CC off. That does not survive checking:
+the two host-CC-off runs came in at 0.68 and 0.93 tok/s and bracketed the host-CC-on run at
+0.93, so the comparison sat entirely inside run-to-run variance. At ~34 ms of collectives in
+a ~275 ms step, the whole collective budget is ~13% and the host-CC share of it is a few
+percent -- below the +/- 6% single-run floor. Resolving it needs repeats at a longer
+generation, which is running now.
+
+The transferable point is about method rather than about this flag. An isolated
+microbenchmark can rank a primitive cleanly; it cannot rank a whole-system configuration
+whose effect is smaller than the system's measurement noise. Establish the noise floor
+first, then decide what is worth A/B-ing at all.
 
 ## Contents
 
