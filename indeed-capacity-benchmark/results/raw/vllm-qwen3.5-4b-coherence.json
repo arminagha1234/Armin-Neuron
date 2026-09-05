@@ -1,0 +1,23 @@
+{
+  "samples": [
+    {
+      "probe": "capital",
+      "expect": "paris",
+      "text": "The capital of France is **Paris**.",
+      "pass": true
+    },
+    {
+      "probe": "planet",
+      "expect": "jupiter",
+      "text": "The largest planet in our solar system is **Jupiter**.\n\nHere are a few key facts about it:\n*   **Size**: It is massive enough to contain all the other planets in our solar system combined (except the ",
+      "pass": true
+    },
+    {
+      "probe": "math",
+      "expect": "4",
+      "text": "4",
+      "pass": true
+    }
+  ],
+  "passed": 3
+}

@@ -1,0 +1,84 @@
+{
+  "shape": "3500in/1out",
+  "endpoint": "chat",
+  "single": [
+    {
+      "s": 0.2605,
+      "usage": {
+        "prompt_tokens": 3288,
+        "total_tokens": 3289,
+        "completion_tokens": 1,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "s": 0.2529,
+      "usage": {
+        "prompt_tokens": 3288,
+        "total_tokens": 3289,
+        "completion_tokens": 1,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "s": 0.2526,
+      "usage": {
+        "prompt_tokens": 3288,
+        "total_tokens": 3289,
+        "completion_tokens": 1,
+        "prompt_tokens_details": null
+      }
+    }
+  ],
+  "concurrency": [
+    {
+      "conc": 1,
+      "wall_s": 0.252,
+      "ok": 1,
+      "rps": 3.97,
+      "avg_lat_s": 0.252
+    },
+    {
+      "conc": 2,
+      "wall_s": 0.498,
+      "ok": 2,
+      "rps": 4.014,
+      "avg_lat_s": 0.377
+    },
+    {
+      "conc": 4,
+      "wall_s": 0.99,
+      "ok": 4,
+      "rps": 4.041,
+      "avg_lat_s": 0.627
+    },
+    {
+      "conc": 8,
+      "wall_s": 1.949,
+      "ok": 8,
+      "rps": 4.104,
+      "avg_lat_s": 1.103
+    },
+    {
+      "conc": 16,
+      "wall_s": 3.89,
+      "ok": 16,
+      "rps": 4.113,
+      "avg_lat_s": 2.075
+    },
+    {
+      "conc": 32,
+      "wall_s": 7.751,
+      "ok": 32,
+      "rps": 4.128,
+      "avg_lat_s": 4.006
+    },
+    {
+      "conc": 64,
+      "wall_s": 15.476,
+      "ok": 64,
+      "rps": 4.135,
+      "avg_lat_s": 7.865
+    }
+  ]
+}

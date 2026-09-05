@@ -1,0 +1,23 @@
+{
+  "samples": [
+    {
+      "probe": "capital",
+      "expect": "paris",
+      "text": "    \u0131  ...  ---BODY\u00a0\u0e40\u0e2d\u0e32\ufffd\ufffd\u0e1bBRDTEN__\u200b__\u200b\\n\u200b\\text{PRICHABIOABIO",
+      "pass": false
+    },
+    {
+      "probe": "planet",
+      "expect": "jupiter",
+      "text": "    how::SC**__LE**__LE**NON_POST**NON_PRE_PRE_PRE_PRE_PRE_PRE_PRE_PRE",
+      "pass": false
+    },
+    {
+      "probe": "math",
+      "expect": "4",
+      "text": "    **...  **~~__MEBODY.  **~~__ME\\text{\u2014__\u200b\\text{\u2014\\text{\u2014\\text{",
+      "pass": false
+    }
+  ],
+  "passed": 0
+}
