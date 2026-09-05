@@ -12,39 +12,38 @@ compiler team could fix. It was a single missing configuration flag.
 
 ## Measured
 
-> **Correction, 2026-09-05.** An earlier version of this page reported ~8 tok/s. That
-> number was wrong by roughly 10x and is retracted. The benchmark divided by the
-> *requested* token count (`GEN=32`) while the model emitted EOS after 4 tokens, so it
-> credited 31 decode steps to the duration of 3. The harness now passes `ignore_eos=True`
-> and divides by tokens actually produced. Corrected figures below. The correctness
-> result was never affected by this.
+> **Correction, 2026-09-05.** An earlier revision of this page reported ~8 tok/s. That was
+> wrong by roughly 4x and is retracted. The benchmark divided by the *requested* token
+> count (`GEN=32`) while the model emitted EOS after 4 tokens, so it credited 31 decode
+> steps to the duration of 3. The harness now passes `ignore_eos=True` and divides by
+> tokens actually produced. Correctness was never affected.
 
-43 layers, `backend=neuron_native`, TP=32, EP=8, batch 1, prefill 512, GEN requested 32,
-**4 tokens actually generated** (`[4256, 51119, 16, 1]` -- the trailing `1` is EOS):
+43 layers, `backend=neuron_native`, TP=32, EP=8, batch 1, prefill 512, 32 tokens requested
+and **32 actually generated** (`gen_actual=32/32`, 31 decode steps):
 
-| run | TTFT | t_gen | decode steps | decode tok/s | golden token | `NCC_ITIN902` |
+| run | decode MoE kernel | decode tok/s | ms/step | TTFT | golden token | `NCC_` |
 |---|---|---|---|---|---|---|
-| 1 | 219.9 ms | 3.696 s | 3 | **0.86** | PASS (4256) | 0 |
-| 2 | 221.6 ms | 4.696 s | 3 | **0.67** | PASS (4256) | 0 |
-| 3 | 220.2 ms | 3.843 s | 3 | **0.83** | PASS (4256) | 0 |
+| 1 | `moe_cte` | **3.71** | 270 | 219.8 ms | PASS (4256) | 0 |
+| 2 | `moe_cte` (repeat) | **3.77** | 265 | 219.5 ms | PASS (4256) | 0 |
+| 3 | `moe_tkg` | **3.37** | 297 | 220.8 ms | PASS (4256) | 0 |
 
-Decode is therefore **~0.8 tok/s**, about **1.2 s per step** -- not the 125 ms the retracted
-number implied. TTFT is the one figure that was always sound: it comes from a separate
-single-token generate call, so no token-count assumption enters it, and it is stable to
-about +/- 1 ms.
+**Decode is ~3.7 tok/s at batch 1, about 270 ms per step.** TTFT is ~220 ms and was the one
+figure never affected by the bug -- it comes from a separate single-token generate call, so
+no token-count assumption enters it.
 
-Two consequences worth stating, because they invalidate analysis built on the bad number.
-A roofline gap argued from a 125 ms step does not transfer to a 1.2 s step: the measured
-32-rank all-reduce cost of ~0.23 ms x ~150 collectives is ~34 ms, which is ~3% of the real
-step rather than the ~28% it would be of 125 ms. And with only 3 decode steps inside one
-`generate()` call, per-token timing is heavily contaminated by fixed per-request overhead,
-so even 0.8 tok/s is a lower bound on a short generation rather than a steady-state rate.
-A long generation with `ignore_eos=True` is the measurement that will actually mean
-something, and it has not been taken yet.
+The measurement lesson is worth as much as the number. Over 31 decode steps the two
+identical `moe_cte` runs differ by **0.8%**. The earlier 3-step measurement had a spread of
+**+/- 14%** across three runs of the same config. Same model, same box -- the difference is
+entirely that a 3-step window is dominated by fixed per-request overhead inside
+`generate()`. That is also why the intermediate 4-token numbers (0.68-0.93 tok/s) understated
+the rate by ~4x in the other direction: short generations are not merely noisy, they are
+biased. Any decode figure taken over a handful of steps should be discarded rather than
+caveated.
 
 The golden token is the greedy first token for a fixed prompt, and **4256 is the same value
-the XLA path produces**. That is the correctness gate: the native path is not merely
-producing tokens, it is producing the same tokens.
+the XLA path produces** -- across all three configurations, including a completely different
+expert kernel. That is the correctness gate: the native path is not merely producing tokens,
+it is producing the same tokens.
 
 ### What this number is not
 
@@ -118,14 +117,18 @@ If an index like `i_shard_68001` is **bit-stable** across changes that substanti
 graph structure, the thing you changed is not the cause. Trusting that signal earlier would
 have saved a lot of time.
 
-## Where the 125 ms actually goes
+## Where the 270 ms goes
 
-At ~8 tok/s the decode step is about 125 ms, or 2.9 ms per layer. A weight-bandwidth
-roofline accounts for only 1-20% of that, so most of the step is unexplained by the thing
-that is supposed to dominate memory-bound decode. Two concrete causes have since been
-identified by reading the kernel library and the runtime, rather than by guessing.
+At 3.7 tok/s the decode step is about 270 ms, or 6.3 ms per layer. Measured collectives
+account for ~34 ms (~13%) and a weight-bandwidth roofline for a further modest share, so
+most of the step is still unattributed by the things that are supposed to dominate
+memory-bound decode.
 
-### 1. Decode is running the prefill MoE kernel
+Two structural causes were identified by reading the kernel library and the runtime. One of
+them turned out **not** to be the bottleneck when tested -- recorded below rather than
+quietly dropped, because the reasoning looked sound and was still wrong.
+
+### 1. Decode was running the prefill MoE kernel -- fixed, and it did not help
 
 The MoE library exposes two different expert-compute entry points: a **context-encoding**
 kernel, which takes a blockwise token-to-expert mapping and walks blocks, and a
@@ -149,6 +152,19 @@ The token-generation kernel needs no blockwise mapping, no `token_position_to_id
 mapping call from the decode path entirely --- which is also where the `NCC_ITIN902` compiler
 bug documented above lives.
 
+**Measured result: correct, and ~9% slower** (3.37 vs 3.71 tok/s, against a 0.8% run-to-run
+spread). The reasoning above is accurate about what the two kernels do and still failed to
+predict the outcome, for a reason visible in the original call site: it passes
+`skip_token=True`, which is precisely the mechanism for skipping padded token slots. So the
+padded work was largely already being elided, and the "128x waste" framing overstated it.
+The token-generation path additionally runs with `is_all_expert=True`, which walks all 32
+local experts for every token -- so at batch 1 it trades one form of fixed work for another.
+
+The swap is kept behind `VLLM_NEURON_V4_DECODE_MOE=tkg|cte` (default `cte`) because it is a
+verified-correct second implementation, and a better starting point at larger batch where
+walking 32 local experts amortises while CTE block padding does not.
+
+
 There is a wrinkle specific to this model. The fused variant that also folds in the RMSNorm
 and the router cannot express this router: its activation enum has no `sqrt(softplus(x))`,
 it has no notion of a bias that shifts *selection* without shifting the returned affinities,
@@ -161,7 +177,7 @@ A second, smaller thing in the router: top-k was implemented as `k` sequential
 `argmax` + mask passes over `[T, 256]`. At `k=6` that is six full passes to compute what one
 `topk` computes.
 
-### 2. The step is collective-dispatch-bound, and the queue depth says so
+### 2. Collectives are ~13% of the step, and the queue depth explains why they don't overlap
 
 With 43 layers and 3-4 collectives per layer, a decode token issues roughly 130-170
 collectives. On the native path each one compiles to its own small collective-only graph and
@@ -171,14 +187,19 @@ there is **one** compute queue and **one** collectives queue per logical core. R
 collectives queue independently requires issuing the collective on a non-default stream, which
 is the thing host CC actually enables and which this port does not do.
 
-125 ms over ~150 dispatches is ~0.8 ms each, which is the right order of magnitude for a
-host round trip per collective. A profiled graph of comparable shape showed collectives at
-about 43% of the device window with essentially zero overlap against the tensor engine ---
-a share that a weight-bandwidth roofline cannot see at all.
+Measured directly on this image, a 32-rank all-reduce costs ~0.23 ms and that cost is flat
+from 4 KiB to 2 MiB -- so these are alpha-bound, and ~150 of them is **~34 ms, about 13% of
+the 270 ms step**. Real, worth removing, but not the dominant term. An earlier revision of
+this page claimed ~28% on the strength of the retracted 125 ms step figure; that share was
+arithmetic on a wrong denominator.
 
-Both of these are software-structural, not hardware limits. Neither was visible from the
-roofline, which is the general lesson: a 5-100x unexplained gap is usually a
-bottleneck-*class* error, and cost models that assume the class only tell you the floor.
+Both are software-structural rather than hardware limits, and neither was visible from a
+roofline. But the honest summary is that **the largest term in the 270 ms step is still
+unattributed**: ~34 ms of collectives plus a modest weight-DMA share leaves most of it
+unexplained, and the one structural fix that was actually implemented and measured made
+things slightly worse. The next step is a device profile, not another argument from first
+principles -- which is the real lesson here, since two rounds of plausible reasoning from
+source produced one correct diagnosis and one wrong prediction.
 
 ### Measuring it rather than arguing about it
 
@@ -221,37 +242,14 @@ process** -- the conjunction matters, because starvation messages also appear tr
 during a perfectly healthy compile (observed: 4 starvation messages while 160 `neuronx-cc`
 processes were running, on a run that went on to succeed).
 
-## The MoE kernel swap: correct, but not faster
+## The decode MoE implementation switch
 
-Decode now has a second implementation, `_forward_experts_tkg`, which calls the
-token-generation expert kernel with per-token affinities and indices instead of the
-context-encoding kernel with a blockwise mapping. Selected by
-`VLLM_NEURON_V4_DECODE_MOE=tkg|cte`.
+`_forward_experts_tkg` in [`port/model.py`](path-analysis/) is a second decode expert
+implementation selected by `VLLM_NEURON_V4_DECODE_MOE=tkg|cte`. Mechanism, measured result
+and why the prediction was wrong are in "Where the 270 ms goes" above; the short version is
+that it is verified correct (golden token 4256) and about 9% slower at batch 1, so `cte`
+remains the default.
 
-**It is correct.** Golden token 4256, matching the XLA path, through an entirely different
-expert kernel with no blockwise mapping and therefore no call into the code path that
-produces `NCC_ITIN902`. Zero `NCC_` of any kind.
-
-**It is not measurably faster**, and the honest reason is that this comparison cannot
-resolve the difference. One run per cell, against a baseline whose own three-run spread is
-+/- 14%:
-
-| decode MoE kernel | host CC | decode tok/s (corrected) | golden |
-|---|---|---|---|
-| `moe_tkg` | off | 0.68 | PASS |
-| `moe_tkg` | on | 0.93 | PASS |
-| `moe_cte` (baseline) | off | 0.93 | PASS |
-
-Every value lands inside the baseline's noise band, so no ordering here is supportable.
-What the runs do establish is that the TKG path works end to end and produces identical
-tokens, which makes it a usable foundation rather than a proven win.
-
-I had predicted a large gain on the grounds that the CTE path pads to a 128-token floor at
-decode and then runs ~37 static blocks per layer for one real token. That prediction did
-not survive contact with measurement, and part of the reason is visible in the call itself:
-the CTE path passes `skip_token=True`, which is precisely the mechanism for skipping padded
-token slots. So the padded work was likely already being elided, and the "128x waste"
-framing overstated it.
 
 ## Host collective-communication is not required, and the microbenchmark mispredicted
 
