@@ -1,0 +1,23 @@
+{
+  "samples": [
+    {
+      "probe": "capital",
+      "expect": "paris",
+      "text": "The capital of France is Paris.",
+      "pass": true
+    },
+    {
+      "probe": "planet",
+      "expect": "jupiter",
+      "text": "The largest planet in our solar system is **Jupiter**. It is a gas giant and has a diameter of about 86,881 miles (139,822 kilometers), making it more than 11 times wider than Earth. Jupiter is known for its prominent Great Red Spot, a giant storm th",
+      "pass": true
+    },
+    {
+      "probe": "math",
+      "expect": "4",
+      "text": "4",
+      "pass": true
+    }
+  ],
+  "passed": 3
+}

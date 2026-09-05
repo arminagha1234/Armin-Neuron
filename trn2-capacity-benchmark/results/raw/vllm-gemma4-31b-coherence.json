@@ -1,0 +1,30 @@
+{
+  "samples": [
+    {
+      "probe": "capital",
+      "expect": "Paris",
+      "chat_text": "The capital of France is Paris.",
+      "chat_pass": true,
+      "raw_text": " France is France is France is France is France is",
+      "raw_pass": false
+    },
+    {
+      "probe": "planet",
+      "expect": "Jupiter",
+      "chat_text": "The largest planet in our solar system is **Jupiter**.",
+      "chat_pass": true,
+      "raw_text": " our solar system is our solar system is our solar",
+      "raw_pass": false
+    },
+    {
+      "probe": "math",
+      "expect": "4",
+      "chat_text": "4",
+      "chat_pass": true,
+      "raw_text": " 2 plus 2? The answer is ",
+      "raw_pass": false
+    }
+  ],
+  "chat_passed": 3,
+  "raw_passed": 0
+}
