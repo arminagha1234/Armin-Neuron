@@ -12,50 +12,81 @@ compiler team could fix. It was a single missing configuration flag.
 
 ## Measured
 
-> **Two corrections, 2026-09-05.** (1) An earlier revision reported ~8 tok/s. The benchmark
-> divided by the *requested* token count (`GEN=32`) while the model emitted EOS after 4
-> tokens, crediting 31 decode steps to the duration of 3. Fixed with `ignore_eos=True` plus
-> division by tokens actually produced. (2) A later revision reported that an alternative
-> MoE decode kernel was 9% slower. **That comparison was invalid** -- the deploy script
-> preferred a stale copy of the model source over the one shipped with the launch, so the
-> runs being compared were byte-identical. Both claims are retracted. Correctness was never
-> affected by either.
+43 layers, `backend=neuron_native`, TP=32, EP=8, batch 1, prefill 512, **128 tokens
+requested and 128 generated** (`gen_actual=128/128`, 127 decode steps, `ignore_eos=True`).
+Golden token 4256 and zero `NCC_` on every row.
 
-43 layers, `backend=neuron_native`, TP=32, EP=8, batch 1, prefill 512, 32 tokens requested
-and **32 actually generated** (`gen_actual=32/32`, 31 decode steps). Three runs of the same
-configuration:
-
-| run | decode tok/s | ms/step | TTFT | golden token | `NCC_` |
+| run | model.py | decode MoE | host CC | decode tok/s | ms/step |
 |---|---|---|---|---|---|
-| 1 | 3.37 | 297 | 220.8 ms | PASS (4256) | 0 |
-| 2 | 3.71 | 270 | 219.8 ms | PASS (4256) | 0 |
-| 3 | 3.77 | 265 | 219.5 ms | PASS (4256) | 0 |
+| 1 | baseline | `moe_cte` | on | 5.19 | 193 |
+| 2 | baseline | `moe_cte` | on | 5.07 | 197 |
+| 3 | baseline | `moe_cte` | **off** | 5.42 | 185 |
+| 4 | + router/pow2 | `moe_cte` | on | 6.08 | 165 |
+| 5 | + router/pow2 | `moe_cte` | on | **6.30** | **159** |
+| 6 | + router/pow2 | `moe_tkg` | on | 6.26 | 160 |
 
-**Decode is ~3.6 tok/s +/- 6% at batch 1, about 275 ms per step.** TTFT is ~220 ms and is by
-far the most stable figure (+/- 0.7%), because it comes from a separate single-token generate
-call where no token-count assumption enters.
+**Decode is ~6.2 tok/s at batch 1, about 160 ms per step.** TTFT is ~217 ms.
 
-Those three rows were *intended* to be two different MoE kernels plus a repeat. They turned
-out to be the same code three times, which makes them something more useful: an honest
-measurement of run-to-run variance. **+/- 6% is the resolution floor** for a single run of
-this configuration, so no optimisation claiming less than that can be supported without
-repeats.
+### What moved it
 
-Note also how badly a short generation misleads, in both directions. The same build measured
-~8 tok/s with the token-count bug and ~0.8 tok/s over 4 real tokens; the truth is ~3.6.
-Short windows inside one `generate()` call are dominated by fixed per-request overhead, so
-they are biased rather than merely noisy, and should be discarded rather than caveated.
+**Two small rewrites are worth +20.7%** (rows 1-2 vs 4-5: same kernel, same collective
+config, differing only in these edits, against a +/- 1.2% run-to-run spread):
 
-The golden token is the greedy first token for a fixed prompt, and **4256 is the same value
-the XLA path produces**. That is the correctness gate: the native path is not merely
-producing tokens, it is producing the same tokens.
+- The router selected its top-6 experts with **six sequential `argmax` + suppress passes**
+  over a `[T, 256]` score tensor. That is six full reductions per MoE layer, 43 layers deep,
+  to compute what one `topk` computes. Replaced with a single `torch.topk` plus the same
+  arange-comparison one-hot the hash-routing branch already used. Verified bit-identical to
+  the old mask on 200 random cases across five batch sizes, and identical in the downstream
+  affinities.
+- `x.pow(2)` -> `x * x` at three RMSNorm sites. `pow` lowers to HLO `power`, which consumes
+  one of eight activation-lookup-table slots; `multiply` does not. Bit-exact by construction
+  and verified over 18 shape/dtype combinations.
+
+Neither is clever. Both were sitting in the hot path for 43 layers.
+
+**`moe_tkg` is correct and throughput-neutral** (row 6 at 6.26 against a `moe_cte` mean of
+6.19, inside the +/- 1.8% spread). It produces the same golden token through an entirely
+different expert kernel with no blockwise mapping, which is worth having, but it does not
+move batch-1 throughput. Kept behind `VLLM_NEURON_V4_DECODE_MOE=tkg|cte`, default `cte`.
+
+**Host CC off looks like +5.7%** (row 3 at 5.42 against 5.19/5.07 with it on). Only one
+sample, so suggestive rather than established -- but it is above both on-runs and it agrees
+in direction with an isolated all-reduce probe, so it is probably real. Repeats running.
+
+### Measure over a long generation, or do not measure
+
+The same build, same box, differing only in how many tokens were generated:
+
+| tokens generated | decode tok/s | run-to-run spread |
+|---|---|---|
+| 4 (EOS, uncontrolled) | 0.67 - 0.93 | +/- 16% |
+| 32 | 3.37 - 3.77 | +/- 6.0% |
+| 128 | 5.07 - 5.19 | +/- 1.2% |
+
+A short window inside one `generate()` call is dominated by fixed per-request overhead, so
+it is **biased low as well as noisy** -- 32 tokens understated the rate by 42%, and 4 tokens
+by a factor of six. And with a +/- 6% floor at 32 tokens, several of the A/Bs run early in
+this work could not have resolved their own effect even in principle. Establish the noise
+floor before deciding what is worth comparing.
+
+Two figures on this page were published and retracted before this was understood. An early
+revision reported ~8 tok/s, from dividing by the *requested* token count while the model hit
+EOS after 4 tokens. A later one reported `moe_tkg` as 9% slower, from runs that turned out
+to be byte-identical because the deploy step preferred a stale copy of the model source over
+the one shipped with the launch. Both are written up below rather than quietly removed; the
+second in particular has a lesson worth more than the number.
+
+The golden token is the greedy first token for a fixed prompt, and 4256 is the same value
+the XLA path produces -- across every configuration above, including a completely different
+expert kernel.
 
 ### What this number is not
 
-- **Not comparable to the XLA path's 22.25 tok/s.** That is batch 8; this is batch 1. For
-  scale, the XLA path on this same model measures 1.35 tok/s at batch 1 and 37.81 at batch
-  128. The batch-1 XLA figure (1.35) against the corrected native figure (~0.8) is the
-  like-for-like pair, and those are the same order of magnitude.
+- **Not comparable to the XLA path's 22.25 tok/s.** That is batch 8; this is batch 1. The
+  like-for-like pair is batch 1 against batch 1: XLA measures **1.35 tok/s** there, and this
+  native path now measures **~6.2**. Read in that direction the native path is ahead at batch
+  1; the XLA path wins overall because it scales with batch (37.81 at batch 128) and this one
+  cannot yet leave batch 1.
 - **Batch 8 does not run on this path at all today.** It deadlocks; see below.
 - **Not tuned.** The MoE compute dtype has not been swept.
 - **Not batch-scaled, and there is a ceiling.** Batch 32 does not run at 43 layers: it
@@ -122,11 +153,11 @@ If an index like `i_shard_68001` is **bit-stable** across changes that substanti
 graph structure, the thing you changed is not the cause. Trusting that signal earlier would
 have saved a lot of time.
 
-## Where the 270 ms goes
+## Where the 160 ms goes
 
-At 3.7 tok/s the decode step is about 270 ms, or 6.3 ms per layer. Measured collectives
-account for ~34 ms (~13%) and a weight-bandwidth roofline for a further modest share, so
-most of the step is still unattributed by the things that are supposed to dominate
+At 6.2 tok/s the decode step is about 160 ms, or 3.7 ms per layer. Measured collectives
+account for ~34 ms (~21%) and a weight-bandwidth roofline for a further modest share, so
+roughly half the step is still unattributed by the things that are supposed to dominate
 memory-bound decode.
 
 Two structural causes were identified by reading the kernel library and the runtime. The
@@ -157,11 +188,10 @@ The token-generation kernel needs no blockwise mapping, no `token_position_to_id
 mapping call from the decode path entirely --- which is also where the `NCC_ITIN902` compiler
 bug documented above lives.
 
-**Status: implemented, not yet measured.** An earlier revision of this page reported the
-token-generation path as 9% slower. That number is withdrawn: the deploy step preferred a
-stale copy of `model.py` on shared storage over the one shipped in the launch payload, so
-the "before" and "after" runs executed identical code and the difference was ordinary
-run-to-run variance. Details in the failure note below.
+**Measured result: correct, throughput-neutral.** 6.26 tok/s against a `moe_cte` mean of
+6.19 over the same code, inside the +/- 1.8% spread. An earlier revision reported it as 9%
+slower; that was withdrawn because the deploy step had preferred a stale copy of `model.py`
+and the compared runs were byte-identical (failure note below).
 
 Two things temper the expected gain even so, and both are worth stating before measuring
 rather than after. The context-encoding call already passes `skip_token=True`, which is
@@ -187,7 +217,7 @@ A second, smaller thing in the router: top-k was implemented as `k` sequential
 `argmax` + mask passes over `[T, 256]`. At `k=6` that is six full passes to compute what one
 `topk` computes.
 
-### 2. Collectives are ~13% of the step, and the queue depth explains why they don't overlap
+### 2. Collectives are ~21% of the step, and the queue depth explains why they don't overlap
 
 With 43 layers and 3-4 collectives per layer, a decode token issues roughly 130-170
 collectives. On the native path each one compiles to its own small collective-only graph and
@@ -198,18 +228,20 @@ collectives queue independently requires issuing the collective on a non-default
 is the thing host CC actually enables and which this port does not do.
 
 Measured directly on this image, a 32-rank all-reduce costs ~0.23 ms and that cost is flat
-from 4 KiB to 2 MiB -- so these are alpha-bound, and ~150 of them is **~34 ms, about 13% of
-the 270 ms step**. Real, worth removing, but not the dominant term. An earlier revision of
-this page claimed ~28% on the strength of the retracted 125 ms step figure; that share was
-arithmetic on a wrong denominator.
+from 4 KiB to 2 MiB -- so these are alpha-bound, and ~150 of them is **~34 ms, about 21% of
+the 160 ms step**. That makes collective count the largest identified term, and it is
+attackable: the MoE mapping's `all_gather` + `all_reduce MAX` pair is already avoided at
+decode by computing the mapping redundantly per rank, and the remaining per-layer pair is
+what a decode megakernel or a hierarchical schedule would target.
 
 Both are software-structural rather than hardware limits, and neither was visible from a
-roofline. But the honest summary is that **the largest term in the 270 ms step is still
-unattributed**: ~34 ms of collectives plus a modest weight-DMA share leaves most of it
-unexplained, and the one structural fix that was actually implemented and measured made
-things slightly worse. The next step is a device profile, not another argument from first
-principles -- which is the real lesson here, since two rounds of plausible reasoning from
-source produced one correct diagnosis and one wrong prediction.
+roofline. The honest summary is that **roughly half the 160 ms step is still
+unattributed**: ~34 ms of collectives plus a modest weight-DMA share does not close it, and
+the structural MoE-kernel fix that reasoning from source predicted would be large turned out
+to be throughput-neutral. Meanwhile the two changes that actually moved the number by +20%
+were a redundant reduction loop and an operator choice -- neither of which any amount of
+kernel-library reading would have surfaced, because neither is in the kernel library. The
+remaining gap needs a device profile, not another argument from first principles.
 
 ### Measuring it rather than arguing about it
 
@@ -319,13 +351,14 @@ alpha-bound, not bandwidth-bound, so reducing collective *count* is the lever an
 chunk size is not (a 256 KiB chunk measured slightly worse, and
 `INTRA_LATENCY_OPT_MESH_ALG` is rejected outright by the runtime).
 
-**Whether turning it off helps end-to-end is still unmeasured.** An earlier revision of this
-page claimed the full model got *slower* with host CC off. That does not survive checking:
-the two host-CC-off runs came in at 0.68 and 0.93 tok/s and bracketed the host-CC-on run at
-0.93, so the comparison sat entirely inside run-to-run variance. At ~34 ms of collectives in
-a ~275 ms step, the whole collective budget is ~13% and the host-CC share of it is a few
-percent -- below the +/- 6% single-run floor. Resolving it needs repeats at a longer
-generation, which is running now.
+**End-to-end, turning it off measures ~5.7% faster** -- but only once the measurement was
+good enough to see it. An earlier revision of this page claimed the opposite, that the full
+model got *slower* with host CC off; that comparison had the two host-CC-off runs at 0.68
+and 0.93 tok/s bracketing the on-run at 0.93, i.e. entirely inside variance. At ~34 ms of collectives in
+a ~160 ms step the whole collective budget is ~21%, and at a 128-token generation the noise
+floor drops to ~1.2% -- which is finally fine enough to see a host-CC effect. The first such
+measurement puts host CC off at **+5.7%** (5.42 vs 5.19/5.07), agreeing in direction with
+the isolated probe. One sample; repeats running.
 
 The transferable point is about method rather than about this flag. An isolated
 microbenchmark can rank a primitive cleanly; it cannot rank a whole-system configuration
