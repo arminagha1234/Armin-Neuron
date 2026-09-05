@@ -33,7 +33,13 @@ producing tokens, it is producing the same tokens.
 - **Not comparable to the XLA path's 22.25 tok/s.** That is batch 8; this is batch 1. Decode
   here is weight-DMA-bound, so batching amortises a fixed per-step weight read. For scale:
   the XLA path on this same model measures 1.35 tok/s at batch 1 and 37.81 at batch 128.
-- **Not tuned.** No batch scaling, and the MoE compute dtype has not been swept.
+- **Not tuned.** The MoE compute dtype has not been swept.
+- **Not batch-scaled, and there is a ceiling.** Batch 32 does not run at 43 layers: it
+  compiles clean (zero `NCC_`) and then fails to *allocate*, at prefill warmup ---
+  `NRT EXECUTION FAILED: Failed to load model with collectives, Failed to allocate resource`
+  for prefill bucket 512. That is device HBM exhaustion, not a graph defect. The same
+  signature appears with an over-large `num_gpu_blocks_override`. Batch scaling on this path
+  therefore has to be co-tuned with the prefill bucket and KV block count, not raised alone.
 - **Not a served endpoint.** This is offline `LLM(...)` + `generate(...)`, not an HTTP server
   with continuous batching. Standing that up is a further step.
 
@@ -92,6 +98,78 @@ If an index like `i_shard_68001` is **bit-stable** across changes that substanti
 graph structure, the thing you changed is not the cause. Trusting that signal earlier would
 have saved a lot of time.
 
+## Where the 125 ms actually goes
+
+At ~8 tok/s the decode step is about 125 ms, or 2.9 ms per layer. A weight-bandwidth
+roofline accounts for only 1-20% of that, so most of the step is unexplained by the thing
+that is supposed to dominate memory-bound decode. Two concrete causes have since been
+identified by reading the kernel library and the runtime, rather than by guessing.
+
+### 1. Decode is running the prefill MoE kernel
+
+The MoE library exposes two different expert-compute entry points: a **context-encoding**
+kernel, which takes a blockwise token-to-expert mapping and walks blocks, and a
+**token-generation** kernel, which takes per-token affinities directly. This port called the
+context-encoding one for both phases, differing only in a `tp_degree` argument to the mapping
+builder.
+
+That is the wrong pairing, and the block loop is why. The context-encoding kernel's loop is a
+plain Python `range()` unrolled at trace time over `len(token_position_to_id) // block_size`.
+It is not data-dependent. The `conditions` vector that marks which blocks hold real tokens is
+accepted by the wrapper and then **never forwarded to the kernel at all** --- the kernel has
+no such parameter. So at decode, with roughly one real token, the kernel still executes the
+full static block count for every layer. The mapping builder's own block count is
+`ceil((T*k - (E_local-1)) / block_size) + E_local - 1`, and that `+ E_local - 1` term is
+structural: with 32 local experts you cannot get below 32 blocks regardless of how few tokens
+you have.
+
+The token-generation kernel needs no blockwise mapping, no `token_position_to_id`, no
+`block_to_expert`, and no `conditions`. It takes `expert_affinities [T, E]` and
+`expert_index [T, K]` and does its own expert-local slicing from a rank id. That deletes the
+mapping call from the decode path entirely --- which is also where the `NCC_ITIN902` compiler
+bug documented above lives.
+
+There is a wrinkle specific to this model. The fused variant that also folds in the RMSNorm
+and the router cannot express this router: its activation enum has no `sqrt(softplus(x))`,
+it has no notion of a bias that shifts *selection* without shifting the returned affinities,
+and it has no routed-scaling-factor argument. So the correct split here is a PyTorch router
+feeding the token-generation expert kernel --- which is exactly the split the unfused entry
+point exists for. The router is a `[T, 4096] x [4096, 256]` matmul plus elementwise work; it
+is not where the time is.
+
+A second, smaller thing in the router: top-k was implemented as `k` sequential
+`argmax` + mask passes over `[T, 256]`. At `k=6` that is six full passes to compute what one
+`topk` computes.
+
+### 2. The step is collective-dispatch-bound, and the queue depth says so
+
+With 43 layers and 3-4 collectives per layer, a decode token issues roughly 130-170
+collectives. On the native path each one compiles to its own small collective-only graph and
+is dispatched separately, so there is no compute in the same graph for the compiler to overlap
+it against. And the runtime's queue budget makes overlap structurally impossible on that path:
+there is **one** compute queue and **one** collectives queue per logical core. Reaching the
+collectives queue independently requires issuing the collective on a non-default stream, which
+is the thing host CC actually enables and which this port does not do.
+
+125 ms over ~150 dispatches is ~0.8 ms each, which is the right order of magnitude for a
+host round trip per collective. A profiled graph of comparable shape showed collectives at
+about 43% of the device window with essentially zero overlap against the tensor engine ---
+a share that a weight-bandwidth roofline cannot see at all.
+
+Both of these are software-structural, not hardware limits. Neither was visible from the
+roofline, which is the general lesson: a 5-100x unexplained gap is usually a
+bottleneck-*class* error, and cost models that assume the class only tell you the floor.
+
+### Measuring it rather than arguing about it
+
+For the record, since this cost real time: capturing a device profile on this stack needs
+`NEURON_RT_INSPECT_DEVICE_PROFILE=session`. The value `1` selects a per-graph *model* mode
+that, on this build, emits the compiled graphs and no trace file at all --- which reads
+exactly like profiling being unsupported. It is not. Also worth knowing before you start:
+profiling costs roughly 20-25% throughput, so the step time must come from an unprofiled
+run and the profile used only for attribution; and with 32 workers there is no rank-scoped
+variable, so the env has to be gated on local rank or you get 32 concurrent captures.
+
 ## Contents
 
 - [`path-analysis/`](path-analysis/) — all 15 blockers, each with the exact error it produces
@@ -122,9 +200,23 @@ TORCH_NEURONX_ENABLE_HOST_CC=1
 Two of those are worth calling out. `VLLM_NEURON_PARALLEL_COMPILE_WORKERS=1` is not a
 preference: the setting is per-worker, so the default multiplies by the worker count and can
 put hundreds of concurrent compiler processes on one host. And
-`TORCH_NEURONX_ENABLE_HOST_CC=1` routes collectives through host collective-communication;
-without it, collective init looks for a device path that cannot initialise in a container and
-blocks indefinitely.
+`TORCH_NEURONX_ENABLE_HOST_CC=1` is needed because without it collective init looks for a
+device transport that cannot initialise in this container and blocks indefinitely.
+
+It is worth being precise about what that flag does, because the obvious reading is wrong.
+It does **not** move collective payloads through host memory. Reading the runtime source:
+the flag calls `nrt_cc_create_stream`, which sets a global permitting host-orchestrated
+collectives to coexist with NEFF-embedded ones. The reduce still runs on the device DMA
+engines over HBM addresses. What it changes is *scheduling*, and it only changes execution
+at all for collectives issued on a **non-default** stream. A plain `dist.all_reduce` is on
+the default stream, so on that path the flag is inert for dispatch.
+
+It is not free, though. With host CC on, the runtime reserves a second collective context
+and splits the collective TopSPs and DMA queue-bundles between them, defaulting to `3:1`
+(`NEURON_RT_CC_STREAM_SPLIT`). So enabling it and then never using a side stream hands
+about a quarter of the collective resources to a context that goes unused. The likely
+reason it fixed the hang is unrelated to data movement: the barrier-semaphore reservation
+grows from one context to the maximum when the flag is set.
 
 A useful trick for iteration: `hf_overrides={"num_hidden_layers": 4}` compiles a 4-layer
 slice that still covers `compress_ratios` `[0, 0, 4, 128]`, so it exercises every distinct
