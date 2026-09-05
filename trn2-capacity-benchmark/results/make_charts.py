@@ -79,8 +79,8 @@ MODELS = [
         name="Gemma-4-31B-it",
         shape="3500 in / 50 out",
         ask_lo=50, ask_hi=50, ask=50,
-        per_replica=1.75, tp=32,
-        measured_kind="measured sweep (vLLM, coherence 3/3)",
+        per_replica=2.503, tp=32,
+        measured_kind="measured sweep, saturated (vLLM, coherence 3/3)",
         start_rps=0.0,
         start_label="not running",
     ),
@@ -89,8 +89,8 @@ MODELS = [
         name="Qwen3.5-4B",
         shape="2000 in / 50 out",
         ask_lo=500, ask_hi=500, ask=500,
-        per_replica=8.42, tp=16,   # 16847 tok/s / 2000 tok
-        measured_kind="prefill only (native, no decode)",
+        per_replica=0.157, tp=4,   # MEASURED end-to-end, 2000in/50out (vLLM 3/3)
+        measured_kind="measured, 2000in/50out (vLLM, coherence 3/3)",
         start_rps=0.0,
         start_label="not running",
     ),
@@ -221,9 +221,9 @@ def chart_matrix():
         ("Qwen3-8B", "native PyTorch"): (2, "10,472 tok/s\nMFU 60.3%\ntop-1 ok"),
         ("Qwen3-8B", "vLLM-Neuron"): (2, "13,579 tok/s\n4.13 RPS/replica\ncoherence 3/3"),
         ("Qwen3.5-4B", "native PyTorch"): (2, "16,847 tok/s\np50 119 ms\ntop-1 ok"),
-        ("Qwen3.5-4B", "vLLM-Neuron"): (-1, "attempt 10\n6 causes fixed\nrunning"),
+        ("Qwen3.5-4B", "vLLM-Neuron"): (2, "validated 3/3\n0.157 RPS/rep\n2000in/50out"),
         ("Gemma-4-31B-it", "native PyTorch"): (0, "blocked\ndevice barrier 2\nat TP>=8"),
-        ("Gemma-4-31B-it", "vLLM-Neuron"): (2, "TTFT 0.62 s\n1.75 RPS/replica\ncoherence 3/3"),
+        ("Gemma-4-31B-it", "vLLM-Neuron"): (2, "TTFT 0.62 s\n2.50 RPS/replica\ncoherence 3/3"),
         ("Gemma-4-E2B-it", "native PyTorch"): (1, "9,688 tok/s\nXLA prefill\nargmax 2/3"),
         ("Gemma-4-E2B-it", "vLLM-Neuron"): (0, "blocked\n0/3 coherence\nPLE on, TP=1"),
     }
@@ -271,9 +271,9 @@ def chart_journey():
     # prefill throughput, tokens/sec, per replica
     data = [
         ("Qwen3-8B", 3592, 13579, "1-core XLA", "vLLM TP4"),
-        ("Qwen3.5-4B", 0, 16847, "none", "native TP16"),
+        ("Qwen3.5-4B", 0, 16847, "none", "native TP16 prefill*"),
         ("Gemma-4-E2B", 9688, 9688, "1-core XLA", "same"),
-        ("Gemma-4-31B", 0, 5630, "none", "vLLM TP32*"),
+        ("Gemma-4-31B", 0, 5130, "none", "vLLM TP32*"),
     ]
     fig, ax = plt.subplots(figsize=(10, 5.0))
     x = np.arange(len(data))
@@ -403,10 +403,10 @@ def chart_plan():
         ("Qwen3-8B  100 RPS", 66, AMBER, "2 boxes, no eng. work"),
         ("Qwen3-8B-FP8", 35, AMBER, "port static-fp8 path (llama3 has it)"),
         ("Gemma-4-E2B  vLLM", 30, RED, "per-layer cosine vs CPU ref"),
-        ("Gemma-4-31B  50 RPS", 20, RED, "decode 2.67 tok/s is the wall"),
+        ("Gemma-4-31B  50 RPS", 55, AMBER, "10 boxes; 1.53 tok/s decode = ~33s/req"),
         ("Gemma-4-31B  native", 45, AMBER, "TP=2 too big / TP>=8 barrier bug"),
-        ("Qwen3.5-4B  vLLM", 85, BLUE, "attempt 10 in flight"),
-        ("Qwen3.5-4B  500 RPS", 7, RED, "needs ~1M tok/s - renegotiate"),
+        ("Qwen3.5-4B  vLLM", 100, GREEN, "DONE - validated 3/3"),
+        ("Qwen3.5-4B  500 RPS", 5, RED, "200 boxes; decode-bound - renegotiate"),
     ]
     fig, ax = plt.subplots(figsize=(12.6, 5.4))
     y = np.arange(len(items))[::-1]
@@ -440,8 +440,8 @@ def chart_instances():
         ("Qwen3-8B\n50 RPS",      50, 4, 4.13, True),
         ("Qwen3-8B\n100 RPS",    100, 4, 4.13, True),
         ("gemma-4-E2B\n50 RPS",   50, 1, 2.77, True),
-        ("Qwen3.5-4B\n500 RPS",  500, 16, 8.42, False),
-        ("gemma-4-31B\n50 RPS",   50, 32, 1.75, False),
+        ("Qwen3.5-4B\n500 RPS",  500, 4, 0.157, True),
+        ("gemma-4-31B\n50 RPS",   50, 32, 2.503, False),
     ]
     labels, n3s, n48s, fits = [], [], [], []
     for lbl, ask, tp, rps, _f in rows:
@@ -515,8 +515,8 @@ def chart_answer_card():
         ], None),
         ("Needs MORE than one trn2.48xlarge", RED, [
             ("Qwen3-8B", "100 RPS", "3500 in / 1 out", "66 RPS/box", "2 boxes"),
-            ("gemma-4-31B-it", "50 RPS", "3500 in / 50 out", "3.5 RPS/box", "15 boxes"),
-            ("Qwen3.5-4B", "500 RPS", "2000 in / 50 out", "34 RPS/box", "15+ boxes"),
+            ("gemma-4-31B-it", "50 RPS", "3500 in / 50 out", "5 RPS/box", "10 boxes"),
+            ("Qwen3.5-4B", "500 RPS", "2000 in / 50 out", "2.5 RPS/box", "200 boxes"),
         ], None),
     ]
 
@@ -580,7 +580,7 @@ def chart_answer_card():
             "For the two green rows a FLEET of 3xl is less silicon than one 48xl "
             "(E2B: 5 chips vs 16; Qwen3-8B: 13 vs 16). gemma-4-31B and "
             "Qwen3.5-4B were measured at TP=32 / TP=16, so they have no "
-            "single-3xl number yet.",
+            "",
             transform=ax.transAxes, fontsize=8.6, color=MUTED)
     ax.set_title("Which Trn2 instance does each target need?  (5 targets across 4 models)",
                  fontsize=14, fontweight="bold", pad=12)

@@ -13,7 +13,7 @@ does not work, and the writeup below says so.
 |---|---|---|
 | **Qwen3-8B** | 10,472 tok/s, MFU 60.3% | **13,579 tok/s**, 4.13 RPS/replica, coherence 3/3 |
 | **Qwen3.5-4B** | 16,847 tok/s prefill, p50 119 ms | **validated 3/3** ([port](qwen3.5-4b-vllm-neuron/)) |
-| **Gemma-4-31B-it** | blocked — `device barrier 2` at TP>=8 | TTFT 0.62 s, 1.50 RPS/replica, coherence 3/3 |
+| **Gemma-4-31B-it** | blocked — `device barrier 2` at TP>=8 | TTFT 0.62 s, 2.50 RPS/replica, coherence 3/3 |
 | **Gemma-4-E2B-it** | 9,688 tok/s prefill (XLA), argmax 2/3 | **broken — 0/3** ([findings](gemma4-e2b-findings/)) |
 
 ![matrix](results/charts/03_matrix.png)
@@ -32,7 +32,7 @@ HBM bandwidth or host CPU. It is labelled as such in every chart.
 |---|---|---:|---:|---:|---:|
 | Qwen3-8B | 3500 / 1 | 4.13 | 4 | 66.1 | 4.13 |
 | Gemma-4-E2B | 3500 / 1 | 2.77 | 1 | 177.3 | 11.08 |
-| Gemma-4-31B-it | 3500 / 50 | 1.50 | 32 | 3.0 | — (spans 8 chips) |
+| Gemma-4-31B-it | 3500 / 50 | 2.50 | 32 | 5.0 | — (spans 8 chips) |
 | Qwen3.5-4B | 2000 / 50 | 0.157 | 4 | 2.5 | 0.157 |
 
 ![instances](results/charts/08_instances_3xl_vs_48xl.png)
