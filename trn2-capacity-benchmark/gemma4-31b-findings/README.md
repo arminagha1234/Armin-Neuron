@@ -74,3 +74,32 @@ both initialise fine in the same image.
 TTFT is good (0.62 s). But at 1.58 tok/s per request, 50 output tokens take
 ~30 s. Adding instances buys throughput, not latency. Any capacity plan built on
 RPS alone will understate how slow an individual 31B request is on this stack.
+
+## TKG decode kernel — wired, but does not land on Kaizen
+
+The container ships a raw `nkilib.core.attention.attention_tkg` kernel whose RoPE
+asserts only `d_head % 64 == 0`, so unlike the block megakernel (stuck at 128) it
+*supports* Gemma-4's head_dim 256/512. A 262-line wrapper (`attention_tkg_raw`,
+retargeted from dhwanw's branch by changing 3 import lines) plus a decode
+dispatcher were spliced into the model behind `GEMMA4_DECODE_BACKEND=tkg`. The
+wiring is correct — patch, import, dispatch, and a clean local dry-run all pass —
+but no serving number was obtained, across four attempts:
+
+1. missing import (patcher bug) — fixed.
+2. SWA layers: vLLM 0.21's page-size unification doubles SWA `block_size` 16→32,
+   which breaks the kernel's `s_prior % 128` alignment. dhwanw's fix lives in
+   `neuron_model_runner.py::_compute_swa_num_blocks` (an 8291-line file, 5 call
+   sites) — deep framework surgery.
+3. global-only + **fp8 KV**: internal NKI compile assertion. The wrapper has no
+   fp8 handling (no `k_scale`/`v_scale`/`fp8_packed`/packed-swizzle), and fp8 KV
+   is exactly what enabled the batching win, so the two don't compose without
+   more work.
+4. global-only + **bf16 KV**: compiled *past* the trace stage (the fp8 assertion
+   was gone) but was still compiling at the ~31-min pod wall.
+
+Bounded upside anyway: dhwanw measured SWA-TKG at **+5.5%** and fused-mask at
+**+4.1%** — small next to the **+67%** batching win (17→10 boxes) that config
+tuning already banked. The wrapper and installer are preserved for a longer wall
+or an EC2 box, but the honest conclusion is that on the public 0.21 image + Kaizen,
+config tuning (KV cache sizing, fp8 KV, right `max_model_len`) is where the 31B
+throughput actually came from — not the attention kernel.
