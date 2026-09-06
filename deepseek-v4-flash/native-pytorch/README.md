@@ -426,6 +426,9 @@ So the ordered plan is:
 3. Micro-optimisation of batch-1 compute is done; it has no headroom left worth chasing.
 
 ## Contents
+- [`ROADMAP.md`](ROADMAP.md) -- the "what next and how far can it go" plan: the
+  throughput equation (batching x step-latency x speculation), why batching is the
+  28x prize, and the tiered plan with effort/risk for each lever.
 
 - [`path-analysis/`](path-analysis/) — all 15 blockers, each with the exact error it produces
   and the fix, in the order they surface. Read this before attempting a similar port.
