@@ -152,7 +152,7 @@ def patch_model(path):
     s = edit(
         s,
         "        self.scaling = float(_os.environ.get('GEMMA4_ATTN_SCALE', '1.0'))",
-        "        self.scaling = 1.0 / (self.head_dim ** 0.5)  # trn2: keep per-layer 1/sqrt",
+        "        self.scaling = 1.0 if _os.environ.get('GEMMA4_HF_SCALE','1')=='1' else (1.0 / (self.head_dim ** 0.5))",
         "revert patch-G scaling",
     )
     # shared layers own no k_norm (K/V arrive pre-normed from the donor cache);

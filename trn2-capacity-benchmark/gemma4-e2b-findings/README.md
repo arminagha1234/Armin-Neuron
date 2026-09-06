@@ -312,3 +312,43 @@ mode (the model isn't registered in the current staging tree).
 50 RPS target — so this vLLM cell is not on the capacity critical path. The compiles-
 and-serves milestone + the exonerations above are the bankable result; full coherence
 is a multi-issue debugging project best gated behind the parity harness.
+
+## RESOLVED — the per-layer parity harness found the real bug (it was NOT KV-sharing)
+
+`e2b_parity_harness.py` captures every decoder layer's output from the port (via
+vLLM-Neuron's built-in `tensor_capture`) and compares it, cosine per layer, against
+an HF-CPU reference — with an **fp32 vs bf16 noise floor** so real divergence is
+distinguishable from dtype noise. It runs the whole thing (HF bf16 + HF fp32 + port
+capture + compare) in one Kaizen job.
+
+**What it showed (scaling = `1/sqrt(head_dim)`, the shipped port):**
+- HF bf16-vs-fp32 noise floor ≈ **1.0000 at every layer** — bf16 is noise-free here,
+  so any port cosine < 0.999 is a *real* divergence.
+- The port diverged from HF **starting at layer 0** (cos 0.9755) — a **non-shared**
+  SWA layer. That alone proves the primary bug was **not KV-sharing**.
+- Divergence tracked `head_dim`: worst at the global/full-attention layers
+  (layer 11, head_dim 512, cos **0.669**). That fingerprint points at the attention
+  **scale**.
+
+**Root cause: the attention scale.** The port used `scaling = 1/sqrt(head_dim)` — a
+comment in the source calls it an *inf2 bf16 workaround*. HF Gemma-4 uses
+`scaling = 1.0` and lets **q_norm** control logit magnitude, so `1/sqrt(head_dim)`
+is an *extra* scale on top of q_norm. On trn2 that is simply wrong. 31B tolerated it
+(16 KV heads absorb the flattened softmax); E2B's **MQA (1 KV head)** did not, which
+is why E2B degenerated while 31B stayed coherent.
+
+**Fix + confirmation (scaling = `1.0`):**
+- Every layer now matches HF at **cos ≈ 0.9999–1.0** (== the noise floor); the
+  port's greedy next token becomes **identical to HF's**.
+- End-to-end coherence gate: **3/3** — *"The capital of France is **Paris**"*,
+  *"...**Jupiter**..."*, *"4"*.
+
+So the working E2B vLLM config is **the KV-share port (donor reuse, from
+`fix_e2b_kvshare.py` + `fix_e2b_kvshare_attn.py`) *and* `scaling=1.0`**. The
+KV-share work was necessary for the shared layers to match HF; the scale was the
+dominant bug that corrupted even the non-shared layers and hid everything else.
+`fix_e2b_kvshare_attn.py` now defaults to `scaling=1.0`.
+
+**Lesson:** a per-layer parity harness with a dtype noise floor localizes a bug in a
+few runs. Weeks of reasoning pointed at KV-sharing; one aligned measurement pointed
+at layer 0 and the head-dim fingerprint, and the one-line scale change fixed it.
