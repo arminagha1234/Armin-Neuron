@@ -241,3 +241,33 @@ through the forward** (`Gemma4Model → DecoderLayer → Attention`) in a
 since prior history is already committed. Under the *unrolled* loop this is
 compile-time tensor routing, so it should trace. That is the next step; the
 cache-alias path here is the systems-level de-risking that had to come first.
+
+## Threading variant — and the finding that ordering was never the bug
+
+`fix_e2b_kvshare_thread.py` implements the HF-faithful alternative: the donor stashes
+its post-norm/post-RoPE K/V into the already-threaded `attn_metadata` dict, and the
+shared layer reads it **in-memory** for prefill (no cache read at all), keeping decode
+on the cache-alias path. Threading a static-keyed dict through the unrolled layer loop
+is a proven trace-safe pattern here (`attn_metadata`, `aux_hidden_states`).
+
+It compiles, serves, and produces output **byte-identical** to the cache-alias variant
+("Please explain you are you are…"). That is a decisive negative result: the two K/V
+sourcing paths are numerically equivalent, so **the prefill write-then-read ordering
+was never the bug** — consistent with the fact that torch-neuronx functionalization
+(`InPlaceToOutOfPlacePass`) rewrites an in-place `index_put_` write and its later read
+to preserve read-after-write within one compiled graph. The degeneration is present
+from the **first generated token**, so it originates in **prefill**, not decode.
+
+Ruled out as the cause (via an HF-reference audit): the **double-wide MLP** (fixed by
+`fix_e2b_kvshare.py` patch C — per-layer intermediate size + sharding), **MQA**
+(`num_global_key_value_heads=None`→1 via the E4B config's None-handling), and the
+**sliding-window mask** (math verified `[i-511, i]`). The 31B port already exercises
+global head_dim 512, partial rotary, q/k/v-norm and logit softcap coherently, so those
+are exonerated too.
+
+**Live suspects, in order:** (1) Per-Layer Embeddings (PLE) correctness — engaged
+(`PLE_ENGAGED dim=256`) but never validated numerically against HF; (2) a residual
+shared-layer attention-math issue. The decisive next step is a **per-layer hidden-state
+parity harness vs HF-CPU** to find the first divergent layer (embedding/PLE → pre-0;
+global-attn → a full_attention layer <15; KV-share → layer 15). That localizes the bug
+instead of guessing.
