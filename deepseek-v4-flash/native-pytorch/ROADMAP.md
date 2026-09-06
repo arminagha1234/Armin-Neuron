@@ -52,14 +52,25 @@ Three findings from the decode work bound the search space:
 
 This is the whole game. Nothing else in this document matters as much.
 
-### 1.1 Break the fullgraph lm-head deadlock  ·  effort: low  ·  risk: low
-`VLLM_NEURON_DEBUG_MODE=1` disables fullgraph. If graph-break alone lets batch=8
-compile and run, batching is unblocked with a one-line env change. Cost: some lost
-fusion (measure it). **In flight now.** If it works, immediately sweep batch
-in {8, 16, 32, 64} to find where HBM or the collective cost caps it.
+### 1.1 Break the fullgraph lm-head deadlock  ·  TRIED, did not work
+`VLLM_NEURON_DEBUG_MODE=1` disables fullgraph. **Tested at batch=8: it took effect
+(`fullgraph=False` confirmed in the worker log) and the run still deadlocked at the
+exact same point** -- `vocab_sharding_spmd.py:316 ShardIndexInjection: conflicting
+shard indices {0..31}` -> `all_reduce.default`, then `shm_broadcast` starvation with
+no compiler running. Allowing graph breaks is not sufficient; the vocab-sharding
+collective still compiles into a 32-rank barrier graph. So this is not a config
+toggle.
 
-### 1.2 If graph-break isn't enough: take the lm-head collective out by hand
-Two fallbacks, in order of preference:
+And there is no Python bypass to find: a search across the entire `site-packages`
+turns up **no `vocab_sharding_spmd.py` file and no `ShardIndexInjection` string** --
+the pass is emitted from a compiled C++/native module (the torch-mlir NeuronDispatcher),
+not patchable or flag-gated from Python. The batch>1 deadlock lives in the native
+compiler's SPMD partitioning of the vocab-parallel collective.
+
+### 1.2 The real fix: take the lm-head collective out at the model level  ·  effort: medium
+Since 1.1 is ruled out and there is no flag, the collective has to be removed by
+changing the model so the vocab-sharding SPMD pass has nothing to partition at
+batch>1. Two options, in order of preference:
 - **Eager logits / explicit graph break** right before the lm-head reduction, so
   the decoder stack stays compiled and only the vocab reduction runs eager. Zero
   HBM cost, preserves the greedy token.
