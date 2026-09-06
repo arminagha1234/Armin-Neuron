@@ -271,3 +271,44 @@ shared-layer attention-math issue. The decisive next step is a **per-layer hidde
 parity harness vs HF-CPU** to find the first divergent layer (embedding/PLE → pre-0;
 global-attn → a full_attention layer <15; KV-share → layer 15). That localizes the bug
 instead of guessing.
+
+## Research synthesis — what's exonerated, and the real shape of the problem
+
+Three parallel investigations (KV-sharing precedent/mechanism, Neuron ordering
+guarantees, and an HF-reference correctness audit) converged:
+
+- **Ordering was never the bug.** torch-neuronx functionalization
+  (`InPlaceToOutOfPlacePass`) preserves read-after-write for a native `index_put_`
+  write and a later read in one compiled graph. Proven empirically: the cache-alias
+  and the in-memory-threading variants produce byte-identical output.
+- **PLE is correct.** A full op-by-op audit against HF `gemma3n` and upstream vLLM
+  `gemma4` (embed-scale `sqrt(256)`, projection-scale `1/sqrt(hidden)`, combine
+  `1/sqrt(2)`, tanh-GELU gate, RMSNorm-without-`+1`, per-layer slice, `layer_scalar`)
+  found no discrepancy. Exonerated.
+- **Double-wide MLP, MQA load, sliding-window** are exonerated: patch C fixes the
+  per-layer MLP width + sharding; the E4B config's `num_global_key_value_heads=None`
+  resolves KV heads to 1; the sliding mask is `[i-511, i]` correct.
+- **head_dim 256/512 attention** is fine on trn2 (the 31B port is coherent 3/3 with
+  the same head dims and the same f32 SDPA fallback).
+
+**The uncomfortable finding:** the E4B PLE port this builds on was **never fully
+coherent even for E4B** — its own `STATUS.md` records "PLE implemented, k_eq_v fixed,
+still garbage," and its README notes "some prompts still produce garbage at TP=2." So
+E2B coherence is not a single KV-sharing fix; it is compounded by (a) the base E4B
+port's pre-existing quality gap and (b) E2B's MQA (`num_key_value_heads=1`), which —
+with 8 query heads and no KV-head diversity — is the config most exposed to any
+residual attention-precision or masking imprecision. My KV-share fix moved the failure
+from *multilingual salad* to *degenerate English*, i.e. it helped but sits on top of a
+base that isn't clean.
+
+**Decisive next step (tooling now identified):** a per-layer hidden-state parity
+harness using the vLLM-Neuron staging comparators (`TensorCaptureModel` for per-layer
+capture, `setup_reference_model` for the HF-CPU reference, `assert_close_three_way`),
+to find the first layer that diverges from HF. That converts this from "guess the bug"
+to "read the layer index." It requires making the E2B port importable/runnable in CPU
+mode (the model isn't registered in the current staging tree).
+
+**Pragmatic call:** E2B is correctness-only — the native-PyTorch path already meets the
+50 RPS target — so this vLLM cell is not on the capacity critical path. The compiles-
+and-serves milestone + the exonerations above are the bankable result; full coherence
+is a multi-issue debugging project best gated behind the parity harness.
