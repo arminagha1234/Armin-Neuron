@@ -14,7 +14,7 @@ does not work, and the writeup below says so.
 | **Qwen3-8B** | 10,472 tok/s, MFU 60.3% | **13,579 tok/s**, 4.13 RPS/replica, coherence 3/3 |
 | **Qwen3.5-4B** | 16,847 tok/s prefill, p50 119 ms | **validated 3/3** ([port](qwen3.5-4b-vllm-neuron/)) |
 | **Gemma-4-31B-it** | blocked — `device barrier 2` at TP>=8 | TTFT 0.62 s, 2.50 RPS/replica, coherence 3/3 |
-| **Gemma-4-E2B-it** | 9,688 tok/s prefill (XLA), argmax 2/3 | **broken — 0/3** ([findings](gemma4-e2b-findings/)) |
+| **Gemma-4-E2B-it** | 9,688 tok/s prefill (XLA), argmax 2/3 | **coherence 3/3** — fixed via per-layer parity ([findings](gemma4-e2b-findings/)) |
 
 ![matrix](results/charts/03_matrix.png)
 
