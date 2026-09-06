@@ -44,6 +44,23 @@ config, differing only in these edits, against a +/- 1.2% run-to-run spread):
 
 Neither is clever. Both were sitting in the hot path for 43 layers.
 
+**A second tier of micro-optimisations was throughput-neutral, and that is the useful part.**
+A transpose-free Sinkhorn rewrite (removing ~3,440 tiny `transpose().contiguous()` copy
+kernels per decode step), an int32 causal mask, and dropping four redundant RoPE
+`.contiguous()` calls -- all verified bit-exact -- moved batch-1 decode by about **0%**
+(6.03/5.79 vs a 6.19 baseline, i.e. within noise or slightly down). Removing thousands of
+small copy kernels changing nothing is itself the finding: **batch-1 decode is not bound by
+small-kernel compute count.** It is bound by collective dispatch and fixed per-request /
+per-layer host overhead. That redirects the effort -- see "What next" at the end.
+
+One of those changes also produced a transferable serving lesson. Caching the causal-mask
+iota as a module attribute (`self._ctx_pos_i32 = ...`) inside the decode `forward` is fine
+in eager mode and fatal under compiled serving: it creates the attribute on the first step
+and reads it on the second, which flips a dynamo guard, and vLLM runs with
+`fail_on_recompile` so the mid-serve recompile is a hard error. Lazy attribute creation
+inside a `torch.compile`d forward is a recompile trap; the mask must be rebuilt fresh each
+call (cheap) rather than cached. The int32 dtype win was kept without the caching.
+
 **`moe_tkg` is correct and throughput-neutral** (row 6 at 6.26 against a `moe_cte` mean of
 6.19, inside the +/- 1.8% spread). It produces the same golden token through an entirely
 different expert kernel with no blockwise mapping, which is worth having, but it does not
@@ -243,15 +260,37 @@ were a redundant reduction loop and an operator choice -- neither of which any a
 kernel-library reading would have surfaced, because neither is in the kernel library. The
 remaining gap needs a device profile, not another argument from first principles.
 
-### Measuring it rather than arguing about it
+### Measuring it: what worked, and the wall that didn't
 
-For the record, since this cost real time: capturing a device profile on this stack needs
-`NEURON_RT_INSPECT_DEVICE_PROFILE=session`. The value `1` selects a per-graph *model* mode
-that, on this build, emits the compiled graphs and no trace file at all --- which reads
-exactly like profiling being unsupported. It is not. Also worth knowing before you start:
-profiling costs roughly 20-25% throughput, so the step time must come from an unprofiled
-run and the profile used only for attribution; and with 32 workers there is no rank-scoped
-variable, so the env has to be gated on local rank or you get 32 concurrent captures.
+The convergent evidence above (collectives ~21%, and a 3,440-kernel removal moving nothing)
+already localises the batch-1 bottleneck to dispatch and host overhead. Confirming it with a
+device trace hit a real wall on this stack, documented so the next person does not repeat the
+four iterations it took:
+
+- `neuron-explorer` and `neuron-profile` **are** in the container (`/opt/aws/neuron/bin/`),
+  despite this being an SDK-2.27 image. A `PATH`-only check misses them.
+- Device capture needs `NEURON_RT_INSPECT_DEVICE_PROFILE=session`. The value `1` is a
+  per-graph *model* mode that emits graphs and no trace here -- reads exactly like profiling
+  being unsupported.
+- With 32 workers each pinned to a different core, a global
+  `NEURON_RT_INSPECT_EVENT_FILTER_NC=0` makes 31 fail init with `Requested capture for NC 0,
+  but it is not visible` and the whole job dies. Drop the filter.
+- `torch_neuronx.profiling.NeuronConfig` spawns a helper that allocates its own NeuronCore,
+  which fails under a full TP=32 job (all 64 logical cores held by workers:
+  `Logical Neuron Core(s) not available / NRT_FAILURE in nrt_init`). Use the env-var session
+  capture that attaches to the existing workers instead.
+- **The wall:** even with all of that fixed, the session NTFF is never written, because
+  `DEVICE_PROFILE=session` flushes on *clean* NRT teardown and the vLLM workers hard-crash on
+  teardown (`device_allocator INTERNAL ASSERT FAILED` in `cleanup_dist_env_and_memory`, every
+  run). The buffer never reaches disk. Device tracing of this native-vLLM decode is blocked
+  on SDK 2.27 until teardown is clean.
+- `torch.profiler` in the main process is no substitute: vLLM runs the model in 32 worker
+  subprocesses, so it sees only the RPC wrapper (one 128 ms span).
+
+The profiling verdict is therefore evidence-based rather than trace-based, and it is enough
+to act on: batch-1 decode is dispatch/collective/overhead bound, and the answer is to leave
+batch 1 behind.
+
 
 ## Batch > 1 deadlocks in the lm-head, not the MoE
 
@@ -364,6 +403,27 @@ The transferable point is about method rather than about this flag. An isolated
 microbenchmark can rank a primitive cleanly; it cannot rank a whole-system configuration
 whose effect is smaller than the system's measurement noise. Establish the noise floor
 first, then decide what is worth A/B-ing at all.
+
+## What's next
+
+The batch-1 evidence points one way. Small-kernel compute is not the bottleneck (a
+3,440-kernel-per-step removal moved nothing), collectives are ~21% and the rest is host /
+dispatch overhead, and micro-optimisation has flattened at ~6.2 tok/s. The throughput that
+matters lives in **batching**, and the reference XLA path shows the size of the prize: it
+scales from 1.35 tok/s at batch 1 to 37.81 at batch 128 (~28x). This native path is stuck at
+batch 1 for exactly one reason -- the vocab-sharded lm-head fires a collective inside the
+compiled graph and the 32-rank compile of the batch>1 graph deadlocks at the barrier.
+
+So the ordered plan is:
+
+1. **Unblock batch>1** -- keep the lm-head collective out of the compiled region (eager
+   logits / graph break) or replicate the lm-head to remove the collective entirely. This is
+   the single highest-value change; it converts a 6 tok/s batch-1 demo into a throughput
+   curve.
+2. **Then** revisit collectives at whatever batch serves -- the MoE routing's
+   `all_gather` + `all_reduce MAX` is avoidable by computing the mapping redundantly per rank,
+   and per-layer collectives are what a decode megakernel or a hierarchical schedule target.
+3. Micro-optimisation of batch-1 compute is done; it has no headroom left worth chasing.
 
 ## Contents
 
