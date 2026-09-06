@@ -23,9 +23,10 @@ to measure them honestly. The measured starting point:
 - The reference XLA path on the same model does **1.35 tok/s at batch 1 and 37.81
   at batch 128** -- a **28x** swing that lives almost entirely in factor (1).
 
-That 28x is the headline. It says plainly: **batch_size is the dominant term, and
-this native path forfeits it by being stuck at batch 1.** Every batch-1
-micro-optimisation is a rounding error against it.
+That 28x is the headline: **batch_size is the dominant term.** This native path was
+stuck at batch 1; it now scales to a **5x aggregate at batch 8** (Tier 1 below), the single
+biggest change in this document. It does not yet reach the full 28x -- the peak is at batch 8
+and batch 32 is HBM-bound -- but the order of magnitude has moved.
 
 ## What we already know, so we don't relearn it
 
@@ -39,55 +40,67 @@ Three findings from the decode work bound the search space:
    `topk` replacing six sequential argmax passes, and `pow(2)`->`x*x`, together
    worth +20.7%. Neither is in any kernel library -- they were in the model's hot
    path. That is where cheap wins hide.
-3. **Batch>1 is blocked by one specific thing:** the model compiles with
-   `fullgraph=True`, so the vocab-sharded lm-head's collective sits inside a
-   single 32-rank graph that deadlocks at the compile barrier. The wheel exposes
-   `VLLM_NEURON_DEBUG_MODE=1` -> `fullgraph=False`, which lets dynamo graph-break
-   and keep collectives eager between compiled regions. That experiment is in
-   flight.
+3. **Batch>1 is now unblocked -- and the cause was not the lm-head.** The symptom
+   (a 32-rank hang at a vocab-sharded lm-head `all_reduce`) pointed the wrong way.
+   The real blocker was a dynamic-shape lowering failure: `S_decode = tokens // B`
+   in the decode attention produced an unbacked SymInt the compiler cannot lower at
+   batch>1. Forcing static shapes (`VLLM_NEURON_V4_STATIC_SHAPES=1`) plus `ep_degree=8`
+   fixed it -- batch 8 runs at 30.84 tok/s aggregate (5x over batch 1), golden token
+   matched. Replicating the lm-head, the originally-planned fix, was a dead end that
+   regressed batch 1.
 
 ---
 
-## Tier 1 -- Unlock batching (the 28x prize)
+## Tier 1 -- Unlock batching  ·  DONE (5x at batch 8), ceiling found
 
-This is the whole game. Nothing else in this document matters as much.
+This was the whole game, and it is now unblocked. Measured curve (full 43 layers, TP=32,
+EP=8, `moe_cte`, 128 tokens, golden 4256 verified on every row that runs):
 
-### 1.1 Break the fullgraph lm-head deadlock  ·  TRIED, did not work
-`VLLM_NEURON_DEBUG_MODE=1` disables fullgraph. **Tested at batch=8: it took effect
-(`fullgraph=False` confirmed in the worker log) and the run still deadlocked at the
-exact same point** -- `vocab_sharding_spmd.py:316 ShardIndexInjection: conflicting
-shard indices {0..31}` -> `all_reduce.default`, then `shm_broadcast` starvation with
-no compiler running. Allowing graph breaks is not sufficient; the vocab-sharding
-collective still compiles into a 32-rank barrier graph. So this is not a config
-toggle.
+| batch | decode tok/s (aggregate) | vs batch 1 |
+|---|---|---|
+| 1  | 6.2   | 1.0x |
+| 8  | 30.84 | 5.0x |
+| 16 | 22.89 | 3.7x |
+| 32 | does not fit (OOM) | -- |
 
-And there is no Python bypass to find: a search across the entire `site-packages`
-turns up **no `vocab_sharding_spmd.py` file and no `ShardIndexInjection` string** --
-the pass is emitted from a compiled C++/native module (the torch-mlir NeuronDispatcher),
-not patchable or flag-gated from Python. The batch>1 deadlock lives in the native
-compiler's SPMD partitioning of the vocab-parallel collective.
+### What actually unblocked it -- not the lm-head
 
-### 1.2 The real fix: take the lm-head collective out at the model level  ·  effort: medium
-Since 1.1 is ruled out and there is no flag, the collective has to be removed by
-changing the model so the vocab-sharding SPMD pass has nothing to partition at
-batch>1. Two options, in order of preference:
-- **Eager logits / explicit graph break** right before the lm-head reduction, so
-  the decoder stack stays compiled and only the vocab reduction runs eager. Zero
-  HBM cost, preserves the greedy token.
-- **Replicate the lm-head** instead of vocab-sharding it -- removes the collective
-  entirely, at the cost of `vocab x hidden x 2 bytes` per rank. At vocab~129k,
-  hidden 4096, bf16 that is ~1 GB/rank; check it against the ~21/24 GB already
-  resident before committing.
+The symptom -- a 32-rank hang at a vocab-sharded lm-head `all_reduce`, with
+`ShardIndexInjection: conflicting shard indices` in the log -- pointed at the collective, and
+the original plan chased it there. Both attempts were wrong:
 
-### 1.3 Then tune the batch/bucket grid  ·  effort: medium
-Batch 32 previously failed at prefill warmup with an HBM allocation error, so
-batching has to be co-tuned with the prefill bucket and `num_gpu_blocks_override`,
-not raised blindly. Build the bucket grid the way a real server would: a few
-prefill buckets, a few decode batch sizes, warm each.
+- **`VLLM_NEURON_DEBUG_MODE=1` (fullgraph=False) -- tried, did not help.** Still hung at the
+  same point.
+- **Replicating the lm-head -- tried, dead end.** It removed the vocab collective but
+  *regressed batch 1*: the same hang reappeared at batch 1, because removing one collective
+  just moved the compile skew to the next.
 
-**Expected payoff:** if native tracks the XLA batch curve even loosely, this is
-the difference between ~6 tok/s and tens of tok/s aggregate. It is the only tier
-that changes the order of magnitude.
+The real cause, found by dropping to a 4-layer slice (loads in minutes) that turned the hang
+into a clean error, was a **dynamic-shape lowering failure**. `S_decode = tokens // B` in the
+decode attention is a floordiv of two symbolic sizes, so it lowers to an unbacked SymInt
+(`INT64_MIN`) the Neuron compiler cannot resolve at batch>1. The fix keeps shapes static:
+
+1. `automatic_dynamic_shapes = False` + `assume_static_by_default = True` so the tracer never
+   marks the batch/token dim symbolic (one NEFF per enumerated bucket).
+2. `view(B, -1, hidden)` instead of `view(B, tokens // B, hidden)` at the decode reshapes --
+   identical value, no floordiv SymInt.
+
+Both behind `VLLM_NEURON_V4_STATIC_SHAPES=1` (default off). `ep_degree=8` is required
+alongside: it avoids `NCC_ITIN902` and drops resident HBM enough to fit batch>1 at all.
+
+### What still limits it
+
+- **Aggregate throughput peaks at batch 8 and regresses at batch 16.** The context-encoding
+  MoE kernel does super-linear work as tokens-per-step rise (block count grows with a
+  `+ (E_local - 1)` floor). Pushing the peak out needs the batch-aware token-generation
+  kernel (`VLLM_NEURON_V4_DECODE_MOE=tkg`), correct at batch 1 and untested at batch > 1.
+- **Batch 32 does not fit** at 43 layers -- OOM (`NRT_RESOURCE`, ~25.5 of 25.8 GB per core) at
+  every KV-block count tried. A memory-capacity wall; the levers are weight quantization or a
+  different parallelism layout, not a larger bucket.
+
+The order-of-magnitude change this tier promised is realised in part (5x, not the full 28x
+the XLA path reaches at batch 128), and the two things blocking the rest are named and
+measured rather than mysterious.
 
 ---
 

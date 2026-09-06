@@ -104,14 +104,16 @@ expert kernel.
   native path now measures **~6.2**. Read in that direction the native path is ahead at batch
   1; the XLA path wins overall because it scales with batch (37.81 at batch 128) and this one
   cannot yet leave batch 1.
-- **Batch 8 does not run on this path at all today.** It deadlocks; see below.
+- **Batch > 1 now runs** (it did not when the rows above were taken). Batch 8 measures
+  **30.84 tok/s aggregate, a 5.0x uplift over batch 1**, same golden token 4256. The fix and
+  the full curve are in the batch > 1 section below; the rows above are still batch 1, kept
+  as the clean per-optimisation A/B.
 - **Not tuned.** The MoE compute dtype has not been swept.
-- **Not batch-scaled, and there is a ceiling.** Batch 32 does not run at 43 layers: it
-  compiles clean (zero `NCC_`) and then fails to *allocate*, at prefill warmup ---
-  `NRT EXECUTION FAILED: Failed to load model with collectives, Failed to allocate resource`
-  for prefill bucket 512. That is device HBM exhaustion, not a graph defect. The same
-  signature appears with an over-large `num_gpu_blocks_override`. Batch scaling on this path
-  therefore has to be co-tuned with the prefill bucket and KV block count, not raised alone.
+- **Batch scaling has a ceiling, and it is HBM.** Aggregate throughput peaks at batch 8;
+  batch 16 measures *lower* (22.89 tok/s), and batch 32 does not fit at 43 layers at all ---
+  it OOMs the device (`NRT_RESOURCE`, ~25.5 of 25.8 GB per core) at every KV-block count
+  tried. Past batch 8, scaling needs a batch-aware MoE kernel and/or weight quantization,
+  not just a larger bucket. Details below.
 - **Not a served endpoint.** This is offline `LLM(...)` + `generate(...)`, not an HTTP server
   with continuous batching. Standing that up is a further step.
 
@@ -292,29 +294,120 @@ to act on: batch-1 decode is dispatch/collective/overhead bound, and the answer 
 batch 1 behind.
 
 
-## Batch > 1 deadlocks in the lm-head, not the MoE
+## Batch > 1: the blocker was a dynamic shape, not the lm-head
 
-Five independent runs at `max_num_seqs` 8 sat for 5.5 hours each and produced nothing.
-They were not slow; they were wedged. All five stopped at the identical log line:
+This section corrects an earlier conclusion on this page. Batch > 1 **now runs**, and what
+unblocked it is not what the symptom pointed at.
+
+### The symptom, and the wrong theory
+
+Early runs at `max_num_seqs` 8 wedged: 32 workers spinning, zero compiler processes, only
+`shm_broadcast: No available shared memory broadcast block` once a minute, forever, last
+useful log line:
 
 ```
 WARNING vocab_sharding_spmd.py:316 ShardIndexInjection: conflicting shard indices {0..31}
 INFO    backend.py:125            Detected collective operation: all_reduce.default
 ```
 
-and then emitted only `shm_broadcast: No available shared memory broadcast block found in
-60 seconds` once a minute, forever, with 32 workers spinning at ~11% CPU and **zero**
-compiler processes alive.
+The obvious reading -- and the one this page originally committed to -- was that the
+vocab-sharded lm-head fired an `all_reduce` inside the compiled graph and the 32-rank
+compile barrier deadlocked on it. That theory produced a fix attempt: **replicate the
+lm-head** so there is no vocab collective to partition. It was a dead end. Replication
+**regressed batch 1** -- the identical wedge appeared at batch 1, which the sharded path runs
+fine -- because it changed *which* collective the compile skewed on without removing the
+skew. Removing one collective just moved the hang to the next.
 
-That is a 32-rank compile barrier deadlock on a traced graph that contains a collective.
-At batch 1 the graph either isn't produced or doesn't contain one; at batch>1 the
-vocab-sharded lm-head puts an `all_reduce` inside the traced region and the ranks cannot
-all get through. So the batch>1 blocker is in the **lm-head sharding**, not in the MoE,
-which is where I had been looking.
+### The actual cause
 
-Batch 32 fails differently and earlier -- it compiles clean and then cannot allocate
-(`NRT EXECUTION FAILED: ... Failed to allocate resource` at prefill warmup), i.e. device
-HBM exhaustion. Two distinct blockers, not one.
+A **4-layer slice** (`num_hidden_layers=4`, which loads in minutes) turned the opaque
+32-rank hang into a fast single-node failure with a real error:
+
+```
+error: The size of tensor a (8) must match the size of tensor b (-9223372036854775808)
+       at non-singleton dimension 0
+error: failed to legalize unresolved materialization from ('tensor<2xi64>') to ('tensor<2xindex>')
+```
+
+`-9223372036854775808` is `INT64_MIN`, the sentinel for an **unresolved dynamic dimension**
+(an unbacked SymInt). The compiler cannot lower one; every dimension has to be static. The
+batch dimension `8` was being matched against a dimension the tracer had marked symbolic. At
+batch 1 there is one shape and nothing gets marked dynamic, so it never appeared; at batch > 1
+it did, deterministically. The offending value came from the decode attention:
+
+```python
+B = block_table.shape[0]
+tokens, hidden = hidden_states.shape
+S_decode = tokens // B          # floordiv of two symbolic sizes -> unbacked SymInt
+... hidden_states.view(B, S_decode, hidden)
+```
+
+`tokens // B` is an integer floor-division of two sizes the tracer treats as symbolic, which
+yields an unbacked SymInt even though the value is structurally 1 (one new token per sequence
+per decode step). At full 43-layer scale the same failure surfaced not as a clean error but
+as the hang above: one rank hit the lowering failure and died while the other 31 waited at
+the collective barrier, which reads as `shm_broadcast` starvation. Same root cause, two faces
+at two scales -- which is why the symptom pointed at the collective and the cause was three
+lines away in attention.
+
+### The fix
+
+Two changes, behind `VLLM_NEURON_V4_STATIC_SHAPES=1` (default off, so the batch-1 rows above
+are untouched):
+
+1. **Pin the tracer to static shapes** -- `automatic_dynamic_shapes = False` and
+   `assume_static_by_default = True`, set before the model is compiled. This stops the tracer
+   marking any dimension symbolic after it has seen both the prefill and decode shapes; each
+   shape specialises to its own graph, which is what we want since batch sizes are enumerated
+   up front (one NEFF per bucket).
+2. **Reshape without the floordiv** -- `view(B, -1, hidden)` at the three decode-attention
+   sites, letting the framework infer the middle dimension statically instead of computing
+   `tokens // B`. Mathematically identical, since `tokens == B * S_decode`.
+
+The `ShardIndexInjection` warning still prints under this fix, and compilation now runs
+straight through it to a working decode. So that warning was never the fatal event; it was a
+warning. The fatal event was the dynamic shape.
+
+### One more required flag: expert parallelism
+
+`ep_degree=8` is necessary alongside the static-shape fix, for two reasons documented earlier
+on this page: it avoids the `NCC_ITIN902` MoE compiler bug, and it cuts each rank to its own
+32 experts -- which is what drops resident HBM enough for any batch > 1 to fit at all, and
+also halves weight-load time.
+
+### The measured curve
+
+Full 43 layers, `backend=neuron_native`, TP=32, EP=8, `moe_cte`, 128 tokens generated,
+`ignore_eos=True`, golden token 4256 verified on every row that runs:
+
+| batch | KV blocks | decode tok/s (aggregate) | vs batch 1 | golden |
+|---|---|---|---|---|
+| 1  | 256       | 6.2   | 1.0x | 4256 |
+| 8  | 256       | **30.84** | **5.0x** | 4256 |
+| 16 | 320       | 22.89 | 3.7x | 4256 |
+| 32 | 704 / 1024 | does not fit | -- | OOM |
+
+The shape of this curve matters more than the peak:
+
+- **Aggregate throughput peaks at batch 8 (~5x); batch 16 is *slower* in aggregate.** The
+  per-forward-pass step grows ~2.7x from batch 8 to batch 16 while producing only 2x the
+  tokens. The context-encoding MoE kernel walks a block count that grows with
+  tokens-per-step (with a structural `+ (E_local - 1)` floor), so past batch 8 it does
+  super-linearly more work and hands the batching win back. The batch-aware token-generation
+  kernel (`VLLM_NEURON_V4_DECODE_MOE=tkg`) is the lever to push the peak out, and is untested
+  at batch > 1.
+- **Batch 16 also ran KV-starved.** 512 KV blocks OOM at batch 16, so it ran on 320 -- 20
+  blocks per sequence, exactly the 640-token capacity of the test with no spare. That may
+  itself depress it; a fair batch-16 number wants HBM headroom this config does not have. It
+  is a single clean run and worth reconfirming.
+- **Batch 32 does not fit.** It OOMs at prefill warmup (`NRT_RESOURCE`, peak ~25.5 of 25.8 GB
+  per core) at 1024 KV blocks and again at 704. The EP=8 weights dominate per-core HBM and 43
+  layers of batch-32 KV do not fit alongside them. This is a memory-capacity wall; the levers
+  are weight quantization or a different parallelism layout, not a bucket tweak.
+
+So batch > 1 is unblocked and correct, the 5x at batch 8 is real and verified, and the two
+things that stop it going further are both identified: the MoE kernel's token scaling, and
+device HBM.
 
 **A monitoring lesson that cost 27 machine-hours.** A phase classifier that reports
 "tracing" on the absence of an error will call a deadlock healthy indefinitely. The signal
@@ -406,24 +499,21 @@ first, then decide what is worth A/B-ing at all.
 
 ## What's next
 
-The batch-1 evidence points one way. Small-kernel compute is not the bottleneck (a
-3,440-kernel-per-step removal moved nothing), collectives are ~21% and the rest is host /
-dispatch overhead, and micro-optimisation has flattened at ~6.2 tok/s. The throughput that
-matters lives in **batching**, and the reference XLA path shows the size of the prize: it
-scales from 1.35 tok/s at batch 1 to 37.81 at batch 128 (~28x). This native path is stuck at
-batch 1 for exactly one reason -- the vocab-sharded lm-head fires a collective inside the
-compiled graph and the 32-rank compile of the batch>1 graph deadlocks at the barrier.
+Batch > 1 is now unblocked (above), which was the single highest-value change -- it turns a
+6.2 tok/s batch-1 demo into a curve that peaks at 30.84 tok/s (5x) at batch 8. The remaining
+work is ordered by what the curve exposed:
 
-So the ordered plan is:
-
-1. **Unblock batch>1** -- keep the lm-head collective out of the compiled region (eager
-   logits / graph break) or replicate the lm-head to remove the collective entirely. This is
-   the single highest-value change; it converts a 6 tok/s batch-1 demo into a throughput
-   curve.
-2. **Then** revisit collectives at whatever batch serves -- the MoE routing's
+1. **Push the batch peak past 8.** Aggregate throughput regresses at batch 16 because the
+   context-encoding MoE kernel does super-linear work as tokens-per-step rise. The
+   batch-aware token-generation kernel (`VLLM_NEURON_V4_DECODE_MOE=tkg`) is the lever; it is
+   correct at batch 1 and untested at batch > 1.
+2. **Break the batch-32 HBM wall.** Batch 32 does not fit at 43 layers (OOM at every KV
+   count tried). This is a memory-capacity limit, not bucket tuning -- weight quantization or
+   a different parallelism layout is the fix.
+3. **Then** revisit collectives at whatever batch serves -- the MoE routing's
    `all_gather` + `all_reduce MAX` is avoidable by computing the mapping redundantly per rank,
    and per-layer collectives are what a decode megakernel or a hierarchical schedule target.
-3. Micro-optimisation of batch-1 compute is done; it has no headroom left worth chasing.
+4. Micro-optimisation of batch-1 compute is done; it has no headroom left worth chasing.
 
 ## Contents
 - [`ROADMAP.md`](ROADMAP.md) -- the "what next and how far can it go" plan: the
