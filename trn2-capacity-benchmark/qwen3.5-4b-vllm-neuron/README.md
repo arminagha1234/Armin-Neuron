@@ -147,3 +147,24 @@ Qwen3.5 emits a `Thinking Process:` preamble. At `max_tokens=32` all three
 probes were truncated before the answer and scored **0/3** on a model that was
 completely correct. Pass `chat_template_kwargs: {"enable_thinking": false}` or
 raise the budget well past the preamble.
+
+## Batching does not scale — measured, not assumed
+
+The 200-box figure is a floor because **decode does not batch** on this path.
+Firing 16 concurrent requests at `max_num_seqs=16` (2000in/50out):
+
+| concurrency | wall | RPS/replica | avg latency |
+|---:|---:|---:|---:|
+| 1 | 19.0 s | 0.053 | 19.0 s |
+| 16 | 295.8 s | 0.054 | 154.9 s |
+
+16 requests took 16 × 18.5 s — fully serial, no throughput gain (0.053 → 0.054).
+And raising `max_num_seqs` from 4 to 16 made the *single*-request latency worse
+(6.4 s → 19.0 s), because the decode graph pads to the batch dimension while the
+hybrid GatedDeltaNet recurrent-state path does not actually run sequences
+concurrently. So the best config is a *low* `max_num_seqs`, and batching is ruled
+out as a lever. `results/raw/qwen3.5-4b-vllm-batching-ruled-out.json`.
+
+Consequence for the 500 RPS ask: it is not a tuning problem. 500 RPS × 2050
+tokens is ~1M tokens/s of decode-bound work with no batching multiplier — a
+capacity conversation, not an optimization.

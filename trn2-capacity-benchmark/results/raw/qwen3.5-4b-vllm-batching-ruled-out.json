@@ -1,0 +1,20 @@
+{
+  "shape": "2000in/50out",
+  "note": "minimal 2-point bench to fit pod wall",
+  "concurrency": [
+    {
+      "conc": 1,
+      "wall_s": 18.957,
+      "ok": 1,
+      "rps": 0.053,
+      "avg_lat_s": 18.957
+    },
+    {
+      "conc": 16,
+      "wall_s": 295.765,
+      "ok": 16,
+      "rps": 0.054,
+      "avg_lat_s": 154.895
+    }
+  ]
+}
