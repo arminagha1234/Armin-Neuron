@@ -198,3 +198,46 @@ shared-layer gather above is dry-run-designed but **not yet device-validated**. 
 vLLM is a correctness gap, not a capacity one (native already clears 50 RPS), so it is
 not on the capacity critical path — which is why it is documented to this precision
 rather than rushed onto a device.
+
+## Device validation of the attention completion (`fix_e2b_kvshare_attn.py`)
+
+The shared-layer attention was implemented (`fix_e2b_kvshare_attn.py`) and run on a
+`trn2.48xlarge` via Kaizen. It uses the **cache-alias** path (no forward-signature
+threading): a shared layer projects Q only, and reads K/V from the donor's aliased
+paged cache — decode via the existing full-history block-table gather, prefill via a
+gather of the donor's current chunk at `slot_mapping` (the donor wrote it already
+QK/V-normed and RoPE'd). Scaling is kept at the per-layer `1/sqrt(head_dim)` that 31B
+is coherent with on trn2 (patch G's `1.0` is reverted).
+
+Five device iterations, each failing fast at load (cheap to iterate):
+
+| # | Result | Fix |
+|---|---|---|
+| 1 | `k_norm.weight` for layer 15 unmapped | shared layers don't create `k_norm` (HF guards it) |
+| 2 | `fused_qkv_weight_loader expects [Q,K,V]` | Q-only fused weight gets a plain sharding loader + guard `v_norm` |
+| 3 | `NCC_EOOM002` 42.8 GB > 24 GB (TP=1) | E2B can't use TP≥2 (`num_kv_heads=1` → broken replica path); cap the KV pool |
+| 4 | still OOM (I/O ~fixed vs LEN/mns) | `--num-gpu-blocks-override 128`, `LEN=128`, `max_num_seqs=1` |
+| 5 | **compiles + serves** | — |
+
+**Status: compiles and serves; not yet coherent (0/3).** This is real progress — the
+approach *traces on Neuron* (the aliased-cache write-then-read and the
+`k_cache[bi, :, pi]` gather both compile; the gather index math is verified correct
+against the donor's `index_put_`), and the failure mode changed from the pre-fix
+**multilingual salad** to **degenerate English** ("you are you are you are…"). That
+shift means the KV-share path is partially correct, not inert.
+
+### The remaining issue and the robust fix
+
+The most likely residual cause is the **prefill cache write-then-read ordering**. In
+the unrolled layer loop the donor (lower index) writes its K/V to the shared cache
+in-place, and the shared layer reads it back; a graph compiler is free to reorder two
+in-place ops it deems independent, so a shared layer may attend to **stale** K/V.
+Small per-token errors over a 57%-shared network compound into repetition.
+
+The robust fix is HF's approach: **thread the donor's freshly-computed (post-RoPE) K/V
+through the forward** (`Gemma4Model → DecoderLayer → Attention`) in a
+`shared_kv_states[layer_type]` dict — a donor stashes, a shared layer reads it directly
+(in-memory, no cache-ordering dependency) for prefill; decode can keep the cache path
+since prior history is already committed. Under the *unrolled* loop this is
+compile-time tensor routing, so it should trace. That is the next step; the
+cache-alias path here is the systems-level de-risking that had to come first.
