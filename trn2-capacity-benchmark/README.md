@@ -38,9 +38,18 @@ HBM bandwidth or host CPU. It is labelled as such in every chart.
 ![instances](results/charts/08_instances_3xl_vs_48xl.png)
 
 Qwen3-8B at TP=4 occupies exactly one Trainium2 chip with 4.10 of 24 GB per core
-and no cross-chip collectives — that configuration *is* a `trn2.3xlarge`. It was
-measured on a 48xlarge, so it is hardware-equivalent for a single replica but has
-not been run on real 3xl silicon.
+and no cross-chip collectives — that configuration *is* a `trn2.3xlarge`. It has
+now been **run on a real `trn2.3xlarge`** (not extrapolated): 3500-in / 1-out,
+coherent, RPS flat at **3.86 to 4.04** across concurrency 1 to 64. That reproduces
+the 48xlarge single-replica number (4.13) within 2%, confirming the per-chip
+extrapolation holds on dedicated single-chip silicon
+([raw](results/raw/vllm-qwen3-8b-trn2-3xl-measured.json)).
+
+**Can a single `trn2.3xlarge` meet any of the four targets? No.** The measured
+representative (Qwen3-8B, 4.0 RPS) reaches 8% of a 50-RPS target; the smallest
+model (E2B, ~11 RPS/3xl extrapolated) reaches 22%; Qwen3.5 at 500 RPS and 31B at
+TP=32 are not close. The floor for even the easiest target (50 RPS) is one
+`trn2.48xlarge`.
 
 All four models fit a single 3xl in HBM at TP=4 (31B is the tightest at
 15.5 of 24 GB per core). The 31B and Qwen3.5 rows have no single-3xl number only
