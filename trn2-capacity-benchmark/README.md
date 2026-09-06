@@ -111,6 +111,15 @@ If FP8 were live, HBM would drop substantially. It does not. Real FP8 for a dens
 Qwen3 means deriving the port from `llama3/model_static_fp8.py` instead of
 `qwen3_vl/model_bf16.py`.
 
+**Bottom line for the FP8 ask.** A working vLLM FP8 port would not change the
+box count. The 3500-in / 1-out shape is prefill-bound — Qwen3-8B RPS is flat at
+4.13 from concurrency 1 to 64 — so halving KV-cache memory buys nothing here,
+and the native runs show the weights dequantize to bf16 regardless (identical
+HBM and tok/s across all three checkpoints above). FP8's lever is decode-side
+memory, and this shape has almost no decode. So "Qwen3-8B-**FP8** at 3500/1"
+resolves to the same capacity as BF16: **1 x `trn2.48xlarge` at 50 RPS, 2 at
+100.** FP8 is worth the port only for a decode-heavy shape.
+
 ## Reproducing the charts
 
 ```bash
