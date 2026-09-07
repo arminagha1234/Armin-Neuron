@@ -682,7 +682,10 @@ class Qwen3_5GQAAttention(nn.Module):
         #   Path E2 (opt-in, NKI): Hand-rolled fused kernel that does the same
         #     split-K decomposition internally with PSUM accumulation, plus
         #     fuses QK + softmax + AV into one NEFF (no intermediate
-        #     materialization). Toggled with QWEN35_NKI_DECODE=1.
+        #     materialization). ON BY DEFAULT; set QWEN35_NKI_DECODE=0 to fall
+        #     back to Path E1. Measured on trn2.48xlarge TP=4 at 2000 in / 50 out:
+        #     per-token decode 297.0 -> 61.7 ms (4.8x), e2e 18.87 -> 7.35 s (2.57x),
+        #     TTFT unchanged (prefill path untouched), coherence 4/4.
         #
         # Both backends compute the SAME math:
         #   scores = (Q_lo @ K_lo^T + Q_hi @ K_hi^T) * scale
@@ -706,7 +709,7 @@ class Qwen3_5GQAAttention(nn.Module):
 
         import os as _os
         _use_nki_decode = (
-            _os.environ.get("QWEN35_NKI_DECODE", "0") == "1"
+            _os.environ.get("QWEN35_NKI_DECODE", "1") == "1"
             and S_decode == 1
             and Dh == 256
             and S_ctx % 128 == 0
