@@ -965,6 +965,26 @@ class Qwen3_5DeltaNetAttention(nn.Module):
             persistent=False,
         )
 
+        # Blocked-inverse selectors for the fused prefill kernel (B=16).
+        # Built on the host because NKI rejects nisa.memset at a non-zero
+        # partition offset; the kernel only ever slices these along the free
+        # dim, which is legal.
+        _bi_B, _bi_NB = 16, 8
+        _bd = torch.zeros(chunk, chunk, dtype=torch.float32, device="cpu")
+        for _b in range(_bi_NB):
+            _bd[_b * _bi_B:(_b + 1) * _bi_B, _b * _bi_B:(_b + 1) * _bi_B] = 1.0
+        self.register_buffer("deltanet_bd_mask", _bd, persistent=False)
+
+        # cols 0..B-1   : intra-block row selector (1 where p % B == r)
+        # cols B..B+NB-1: block-row selector (1 for the B rows of block bi)
+        _sel = torch.zeros(chunk, chunk, dtype=torch.float32, device="cpu")
+        for _r in range(_bi_B):
+            for _b in range(_bi_NB):
+                _sel[_b * _bi_B + _r, _r] = 1.0
+        for _bi in range(_bi_NB):
+            _sel[_bi * _bi_B:(_bi + 1) * _bi_B, _bi_B + _bi] = 1.0
+        self.register_buffer("deltanet_blk_sel", _sel, persistent=False)
+
         # Dummy KV cache attrs to satisfy bind_kv_cache contract. We never
         # read these in the DeltaNet forward — the real state lives in the
         # buffers above.
@@ -1129,6 +1149,8 @@ class Qwen3_5DeltaNetAttention(nn.Module):
         lower_mask = self.deltanet_lower_mask
         identity_mat = self.deltanet_identity_mat
         lower_mask_diag = self.deltanet_lower_mask_diag
+        bd_mask = self.deltanet_bd_mask
+        blk_sel = self.deltanet_blk_sel
 
         # 11. Per-(b,h) kernel calls
         outputs = []
@@ -1143,6 +1165,8 @@ class Qwen3_5DeltaNetAttention(nn.Module):
                 lower_mask,
                 identity_mat,
                 lower_mask_diag,
+                bd_mask,
+                blk_sel,
             )
             outputs.append(out_bh)
             states.append(state_bh)
