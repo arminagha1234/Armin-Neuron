@@ -61,6 +61,11 @@ import nki
 import nki.isa as nisa
 import nki.language as nl
 
+import os as _os
+
+# Blocked triangular inverse: 29 matmuls instead of 128 (see patch notes).
+_BLOCK_INV = _os.environ.get("QWEN35_BLOCK_INV", "1") == "1"
+
 P_MAX = 128  # Partition dim = chunk_size = k_dim = v_dim
 CHUNK_SIZE = 128
 
@@ -92,6 +97,9 @@ def deltanet_fused_chunked_fwd(
     lower_mask: nl.ndarray,  # (128, 128) float32 — strict lower tri
     identity: nl.ndarray,  # (128, 128) float32 — identity
     lower_mask_diag: nl.ndarray,  # (128, 128) float32 — lower tri with diag
+    bd_mask_in: nl.ndarray,  # (128, 128) float32 — block-diagonal selector (B=16)
+    blk_sel_in: nl.ndarray,  # (128, 128) float32 — cols 0..15 intra-block row
+                             #   selectors, cols 16..23 block-row selectors
 ):
     """Fused chunked DeltaNet forward — single kernel call per (batch, head).
 
@@ -129,6 +137,13 @@ def deltanet_fused_chunked_fwd(
 
     Lmask_d = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
     nisa.dma_copy(dst=Lmask_d, src=lower_mask_diag)
+
+    # Blocked-inverse selectors (host-built; see patch notes on why not memset).
+    if _BLOCK_INV:
+        bd_mask = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+        nisa.dma_copy(dst=bd_mask, src=bd_mask_in)
+        blk_sel = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+        nisa.dma_copy(dst=blk_sel, src=blk_sel_in)
 
     # Ones vector for cumsum scan: (1, CHUNK_SIZE)
     ones_1xC = nl.ndarray((1, CHUNK_SIZE), dtype=nl.float32, buffer=nl.sbuf)
@@ -422,16 +437,18 @@ def deltanet_fused_chunked_fwd(
         nisa.tensor_tensor(dst=A_mat, data1=neg_QK_decay, data2=Lmask, op=nl.multiply)
 
         # ============================================================
-        # Stable triangular solve: N = inv(I - A_mat)
+        # Triangular solve: N = inv(I - A_mat), A_mat strictly lower triangular.
         #
-        # A_mat is strictly lower triangular.  Solve two 64x64 diagonal
-        # blocks row-by-row:
-        #   N[i, :] = e_i + sum_{j<i} A_mat[i, j] * N[j, :]
-        # then merge:
-        #   N21 = N22 @ A21 @ N11
+        #  _BLOCK_INV=1 (BLOCKED, 29 matmuls): the 8 diagonal 16x16 blocks are
+        #     DISJOINT, so one full-tile matmul advances row r of EVERY block at
+        #     once -> 15 row-steps, not 128. Then exact block forward
+        #     substitution (7 steps x 2 matmuls) for the coupling strictly below
+        #     the block diagonal. Same arithmetic as below (no repeated squaring)
+        #     => same stability; validated cos=1.0 / relerr ~1e-7 vs the original.
         #
-        # This is mathematically equivalent to the triangular inverse but avoids
-        # repeated squaring of A.
+        #  _BLOCK_INV=0 (ORIGINAL, 128 matmuls): row-by-row over two 64x64 blocks,
+        #     then merge N21 = N22 @ A21 @ N11. Each step runs a FULL 128x128x128
+        #     matmul and keeps ONE row, discarding 127/128 of the result.
         # ============================================================
         P_acc = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
         nisa.memset(dst=P_acc, value=0.0)
@@ -441,165 +458,245 @@ def deltanet_fused_chunked_fwd(
         A_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
         nisa.tensor_copy(dst=A_T, src=A_T_psum)
 
-        col_mask_left_row = nl.ndarray((1, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.memset(dst=col_mask_left_row, value=0.0)
-        nisa.memset(dst=col_mask_left_row[0:1, 0:64], value=1.0)
-        col_mask_left = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        for i_shuf in nl.static_range(P_MAX // 32):
-            nisa.nc_stream_shuffle(
-                src=col_mask_left_row[0:1, 0:P_MAX],
-                dst=col_mask_left[i_shuf * 32 : i_shuf * 32 + 32, 0:P_MAX],
-                shuffle_mask=_BROADCAST_MASK,
+        if _BLOCK_INV:
+            _B = 16
+            _NB = 8
+
+            # split A into block-diagonal and strictly-below-block parts
+            A_bd = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_tensor(dst=A_bd, data1=A_mat, data2=bd_mask, op=nl.multiply)
+            A_off = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_tensor(dst=A_off, data1=A_mat, data2=A_bd, op=nl.subtract)
+
+            # both transposes are loop-invariant -> hoist
+            A_bd_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_transpose(dst=A_bd_T_psum, data=A_bd)
+            A_bd_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=A_bd_T, src=A_bd_T_psum)
+
+            A_off_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_transpose(dst=A_off_T_psum, data=A_off)
+            A_off_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=A_off_T, src=A_off_T_psum)
+
+            # ---- Phase 1: invert ALL diagonal blocks simultaneously ----
+            # N = I;  for r in 1..B-1:  N += (A_bd @ N) * rowsel[:, r]
+            nisa.tensor_copy(dst=P_acc, src=eye)
+            for r_step in nl.static_range(1, _B):
+                pr_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+                nisa.nc_matmul(dst=pr_psum, stationary=A_bd_T, moving=P_acc)
+                pr = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_copy(dst=pr, src=pr_psum)
+
+                pr_row = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_scalar(
+                    dst=pr_row,
+                    data=pr,
+                    op0=nl.multiply,
+                    operand0=blk_sel[0:P_MAX, r_step : r_step + 1],
+                    engine=nisa.vector_engine,
+                )
+                nisa.tensor_tensor(dst=P_acc, data1=P_acc, data2=pr_row, op=nl.add)
+
+            # Ninv_bd = blockdiag(inv(I - A_ii)); phase 2 needs it transposed
+            Nbd_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_transpose(dst=Nbd_T_psum, data=P_acc)
+            Nbd_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=Nbd_T, src=Nbd_T_psum)
+
+            # ---- Phase 2: exact block forward substitution ----
+            # for bi in 1..NB-1:
+            #     acc = (A_off @ N) restricted to block-row bi
+            #     N  += Ninv_bd @ acc     (block-diag confines it to block bi)
+            for bi in nl.static_range(1, _NB):
+                full_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+                nisa.nc_matmul(dst=full_psum, stationary=A_off_T, moving=P_acc)
+                full = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_copy(dst=full, src=full_psum)
+
+                acc_bi = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_scalar(
+                    dst=acc_bi,
+                    data=full,
+                    op0=nl.multiply,
+                    operand0=blk_sel[0:P_MAX, _B + bi : _B + bi + 1],
+                    engine=nisa.vector_engine,
+                )
+
+                upd_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+                nisa.nc_matmul(dst=upd_psum, stationary=Nbd_T, moving=acc_bi)
+                upd = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_copy(dst=upd, src=upd_psum)
+
+                nisa.tensor_tensor(dst=P_acc, data1=P_acc, data2=upd, op=nl.add)
+        else:
+            P_acc = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.memset(dst=P_acc, value=0.0)
+
+            A_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_transpose(dst=A_T_psum, data=A_mat)
+            A_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=A_T, src=A_T_psum)
+
+            col_mask_left_row = nl.ndarray((1, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.memset(dst=col_mask_left_row, value=0.0)
+            nisa.memset(dst=col_mask_left_row[0:1, 0:64], value=1.0)
+            col_mask_left = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            for i_shuf in nl.static_range(P_MAX // 32):
+                nisa.nc_stream_shuffle(
+                    src=col_mask_left_row[0:1, 0:P_MAX],
+                    dst=col_mask_left[i_shuf * 32 : i_shuf * 32 + 32, 0:P_MAX],
+                    shuffle_mask=_BROADCAST_MASK,
+                )
+
+            col_mask_right_row = nl.ndarray((1, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.memset(dst=col_mask_right_row, value=0.0)
+            nisa.memset(dst=col_mask_right_row[0:1, 64:P_MAX], value=1.0)
+            col_mask_right = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            for i_shuf in nl.static_range(P_MAX // 32):
+                nisa.nc_stream_shuffle(
+                    src=col_mask_right_row[0:1, 0:P_MAX],
+                    dst=col_mask_right[i_shuf * 32 : i_shuf * 32 + 32, 0:P_MAX],
+                    shuffle_mask=_BROADCAST_MASK,
+                )
+
+            block_row_mask_bottom = nl.ndarray((P_MAX, 1), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(
+                dst=block_row_mask_bottom[0:P_MAX, 0:1],
+                src=Lmask_d[0:P_MAX, 64:65],
             )
 
-        col_mask_right_row = nl.ndarray((1, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.memset(dst=col_mask_right_row, value=0.0)
-        nisa.memset(dst=col_mask_right_row[0:1, 64:P_MAX], value=1.0)
-        col_mask_right = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        for i_shuf in nl.static_range(P_MAX // 32):
-            nisa.nc_stream_shuffle(
-                src=col_mask_right_row[0:1, 0:P_MAX],
-                dst=col_mask_right[i_shuf * 32 : i_shuf * 32 + 32, 0:P_MAX],
-                shuffle_mask=_BROADCAST_MASK,
-            )
+            # Top-left block: N11 = inv(I - A11)
+            for solve_i in nl.static_range(64):
+                row_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+                nisa.nc_matmul(dst=row_psum, stationary=A_T, moving=P_acc)
+                row_prod = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_copy(dst=row_prod, src=row_psum)
 
-        block_row_mask_bottom = nl.ndarray((P_MAX, 1), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_copy(
-            dst=block_row_mask_bottom[0:P_MAX, 0:1],
-            src=Lmask_d[0:P_MAX, 64:65],
-        )
+                row_with_eye = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_tensor(
+                    dst=row_with_eye,
+                    data1=row_prod,
+                    data2=eye,
+                    op=nl.add,
+                )
 
-        # Top-left block: N11 = inv(I - A11)
-        for solve_i in nl.static_range(64):
-            row_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
-            nisa.nc_matmul(dst=row_psum, stationary=A_T, moving=P_acc)
-            row_prod = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_copy(dst=row_prod, src=row_psum)
+                row_col_masked = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_tensor(
+                    dst=row_col_masked,
+                    data1=row_with_eye,
+                    data2=col_mask_left,
+                    op=nl.multiply,
+                )
 
-            row_with_eye = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                row_mask = nl.ndarray((P_MAX, 1), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_copy(
+                    dst=row_mask[0:P_MAX, 0:1],
+                    src=eye[0:P_MAX, solve_i : solve_i + 1],
+                )
+                row_update = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_scalar(
+                    dst=row_update,
+                    data=row_col_masked,
+                    op0=nl.multiply,
+                    operand0=row_mask,
+                    engine=nisa.vector_engine,
+                )
+
+                P_next = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_tensor(
+                    dst=P_next,
+                    data1=P_acc,
+                    data2=row_update,
+                    op=nl.add,
+                )
+                nisa.tensor_copy(dst=P_acc, src=P_next)
+
+            # Bottom-right block: N22 = inv(I - A22)
+            for solve_i in nl.static_range(64):
+                row_idx = 64 + solve_i
+
+                row_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+                nisa.nc_matmul(dst=row_psum, stationary=A_T, moving=P_acc)
+                row_prod = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_copy(dst=row_prod, src=row_psum)
+
+                row_with_eye = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_tensor(
+                    dst=row_with_eye,
+                    data1=row_prod,
+                    data2=eye,
+                    op=nl.add,
+                )
+
+                row_col_masked = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_tensor(
+                    dst=row_col_masked,
+                    data1=row_with_eye,
+                    data2=col_mask_right,
+                    op=nl.multiply,
+                )
+
+                row_mask = nl.ndarray((P_MAX, 1), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_copy(
+                    dst=row_mask[0:P_MAX, 0:1],
+                    src=eye[0:P_MAX, row_idx : row_idx + 1],
+                )
+                row_update = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_scalar(
+                    dst=row_update,
+                    data=row_col_masked,
+                    op0=nl.multiply,
+                    operand0=row_mask,
+                    engine=nisa.vector_engine,
+                )
+
+                P_next = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+                nisa.tensor_tensor(
+                    dst=P_next,
+                    data1=P_acc,
+                    data2=row_update,
+                    op=nl.add,
+                )
+                nisa.tensor_copy(dst=P_acc, src=P_next)
+
+            # Merge lower-left block: N21 = N22 @ A21 @ N11.
+            N_diag_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_transpose(dst=N_diag_T_psum, data=P_acc)
+            N_diag_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=N_diag_T, src=N_diag_T_psum)
+
+            tmp_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_matmul(dst=tmp_psum, stationary=N_diag_T, moving=A_mat)
+            tmp = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=tmp, src=tmp_psum)
+
+            tmp_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_transpose(dst=tmp_T_psum, data=tmp)
+            tmp_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=tmp_T, src=tmp_T_psum)
+
+            N21_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
+            nisa.nc_matmul(dst=N21_psum, stationary=tmp_T, moving=P_acc)
+            N21 = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            nisa.tensor_copy(dst=N21, src=N21_psum)
+
+            N21_col_masked = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
             nisa.tensor_tensor(
-                dst=row_with_eye,
-                data1=row_prod,
-                data2=eye,
-                op=nl.add,
-            )
-
-            row_col_masked = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_tensor(
-                dst=row_col_masked,
-                data1=row_with_eye,
+                dst=N21_col_masked,
+                data1=N21,
                 data2=col_mask_left,
                 op=nl.multiply,
             )
-
-            row_mask = nl.ndarray((P_MAX, 1), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_copy(
-                dst=row_mask[0:P_MAX, 0:1],
-                src=eye[0:P_MAX, solve_i : solve_i + 1],
-            )
-            row_update = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
+            N21_block = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
             nisa.tensor_scalar(
-                dst=row_update,
-                data=row_col_masked,
+                dst=N21_block,
+                data=N21_col_masked,
                 op0=nl.multiply,
-                operand0=row_mask,
+                operand0=block_row_mask_bottom,
                 engine=nisa.vector_engine,
             )
-
-            P_next = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_tensor(
-                dst=P_next,
-                data1=P_acc,
-                data2=row_update,
-                op=nl.add,
-            )
-            nisa.tensor_copy(dst=P_acc, src=P_next)
-
-        # Bottom-right block: N22 = inv(I - A22)
-        for solve_i in nl.static_range(64):
-            row_idx = 64 + solve_i
-
-            row_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
-            nisa.nc_matmul(dst=row_psum, stationary=A_T, moving=P_acc)
-            row_prod = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_copy(dst=row_prod, src=row_psum)
-
-            row_with_eye = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_tensor(
-                dst=row_with_eye,
-                data1=row_prod,
-                data2=eye,
-                op=nl.add,
-            )
-
-            row_col_masked = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_tensor(
-                dst=row_col_masked,
-                data1=row_with_eye,
-                data2=col_mask_right,
-                op=nl.multiply,
-            )
-
-            row_mask = nl.ndarray((P_MAX, 1), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_copy(
-                dst=row_mask[0:P_MAX, 0:1],
-                src=eye[0:P_MAX, row_idx : row_idx + 1],
-            )
-            row_update = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_scalar(
-                dst=row_update,
-                data=row_col_masked,
-                op0=nl.multiply,
-                operand0=row_mask,
-                engine=nisa.vector_engine,
-            )
-
-            P_next = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-            nisa.tensor_tensor(
-                dst=P_next,
-                data1=P_acc,
-                data2=row_update,
-                op=nl.add,
-            )
-            nisa.tensor_copy(dst=P_acc, src=P_next)
-
-        # Merge lower-left block: N21 = N22 @ A21 @ N11.
-        N_diag_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
-        nisa.nc_transpose(dst=N_diag_T_psum, data=P_acc)
-        N_diag_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_copy(dst=N_diag_T, src=N_diag_T_psum)
-
-        tmp_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
-        nisa.nc_matmul(dst=tmp_psum, stationary=N_diag_T, moving=A_mat)
-        tmp = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_copy(dst=tmp, src=tmp_psum)
-
-        tmp_T_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
-        nisa.nc_transpose(dst=tmp_T_psum, data=tmp)
-        tmp_T = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_copy(dst=tmp_T, src=tmp_T_psum)
-
-        N21_psum = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.psum)
-        nisa.nc_matmul(dst=N21_psum, stationary=tmp_T, moving=P_acc)
-        N21 = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_copy(dst=N21, src=N21_psum)
-
-        N21_col_masked = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_tensor(
-            dst=N21_col_masked,
-            data1=N21,
-            data2=col_mask_left,
-            op=nl.multiply,
-        )
-        N21_block = nl.ndarray((P_MAX, P_MAX), dtype=nl.float32, buffer=nl.sbuf)
-        nisa.tensor_scalar(
-            dst=N21_block,
-            data=N21_col_masked,
-            op0=nl.multiply,
-            operand0=block_row_mask_bottom,
-            engine=nisa.vector_engine,
-        )
-        nisa.tensor_tensor(dst=P_acc, data1=P_acc, data2=N21_block, op=nl.add)
+            nisa.tensor_tensor(dst=P_acc, data1=P_acc, data2=N21_block, op=nl.add)
 
         # ============================================================
         # Apply N: value_corr = N @ v_beta

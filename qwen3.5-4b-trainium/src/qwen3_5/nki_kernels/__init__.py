@@ -28,6 +28,7 @@ deltanet_fused_chunked_fwd_jit = nki.jit()(_kernel_fn)
 
 def call_deltanet_fused(
     query, key, value, g_in, beta_in, lower_mask, identity, lower_mask_diag,
+    bd_mask=None, blk_sel=None,
     *,
     grid: int = 2,
 ):
@@ -51,6 +52,7 @@ def call_deltanet_fused(
     # the NxDI call site verbatim).
     return wrapped[grid](
         query, key, value, g_in, beta_in, lower_mask, identity, lower_mask_diag,
+        bd_mask, blk_sel,
     )
 
 
