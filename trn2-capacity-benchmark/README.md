@@ -37,11 +37,17 @@ HBM bandwidth or host CPU. It is labelled as such in every chart.
 | Qwen3.5-4B | 2000 / 50 | 0.157 | 4 | 2.5 | 0.157 |
 | Qwen3.5-4B *(tuned)* | 1811 / 50 | **0.775** | 4 | **12.4** | 0.775 |
 
-The two later rows are throughput work done after the original sweep. **31B at
-TP16 beats TP32 per box** (7.66 vs 5.0) — half the chips per replica, four
-replicas instead of two, and 31B saturates at low concurrency anyway. The tuned
+The two later rows are throughput work done after the original sweep. The tuned
 Qwen3.5 row is 14.4x the stock configuration; the ledger is in
 [`qwen3.5-4b-vllm-neuron/THROUGHPUT.md`](qwen3.5-4b-vllm-neuron/THROUGHPUT.md).
+
+**31B at TP16 looks better per box than TP32** (7.66 vs 5.0): half the chips per
+replica, four replicas instead of two, and 31B saturates at concurrency 16
+regardless. Treat that as indicative, not measured — the two rows are separate
+runs at different prompt lengths and serve configs, not a controlled A/B. It does
+agree with the direction of the 31B repo's own TP sweep, which found TP16
+out-scaling TP32 under load because TP32 pays more collective communication per
+step.
 
 ![instances](results/charts/08_instances_3xl_vs_48xl.png)
 
