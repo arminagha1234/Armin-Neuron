@@ -15,19 +15,25 @@ that is stated rather than glossed.
 |---|---|---|
 | how the graph reaches the hardware | `torch.compile` -> torch-xla -> HLO -> `neuronx-cc` | `torch.compile` -> torch-mlir -> StableHLO -> `neuronx-cc`, **no XLA** |
 | status | working, tuned | **working**, un-tuned |
-| best measured decode | **22.25 tok/s** @ batch 8 | **~8 tok/s +/- 1** @ batch 1 |
+| best measured decode | **22.25 tok/s** @ batch 8 | **30.84 tok/s** @ batch 8 (5.0x over batch 1) |
 | golden argmax | matches | matches |
 
-**The two throughput numbers are not comparable.** One is batch 8, the other batch 1, and
-decode on this model is weight-DMA-bound: each step streams expert weights out of HBM and
-does very little math per token, so batching amortises a fixed cost and moves throughput by
-more than an order of magnitude. On the XLA path the same model measures **1.35 tok/s at
-batch 1** and 37.81 at batch 128. A matched-batch native measurement is in progress; until
-it exists, no claim is made about which path is faster.
+**These two figures use different measurement conventions, so read them carefully.** The XLA
+number is steady-state decode (prefill-excluded); the native number is aggregate over a
+128-token generation. Decode on this model is weight-DMA-bound -- each step streams expert
+weights out of HBM and does little math per token -- so batch size dominates throughput. The
+one clean apples-to-apples is batch 1 vs batch 1: XLA measures **1.35 tok/s**, native **6.2**,
+so the native path is well ahead at batch 1. The fuller picture: native decode now scales to a
+**5.0x aggregate at batch 8** (30.84 tok/s, golden token matched), then hits an HBM ceiling --
+batch 16 is *lower* (22.89 tok/s) and batch 32 does not fit (OOM) at 43 layers. The XLA path
+keeps gaining out to **37.81 tok/s at batch 128** because its expert kernel already batches;
+getting the native path past the batch-8 wall needs a batch-aware MoE kernel and/or weight
+quantisation, which is in progress.
 
 ## Why bother with the native path at all
 
-The XLA path works and is faster today. The native path matters for what it makes possible
+The XLA path scales further today (it keeps gaining out to batch 128, where the native path
+is still HBM-capped at batch 8). The native path matters for what it makes possible
 later, not for what it measures now:
 
 - custom NKI kernels can be called directly instead of through an XLA lowering table
