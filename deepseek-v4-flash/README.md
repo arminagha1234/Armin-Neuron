@@ -15,7 +15,7 @@ that is stated rather than glossed.
 |---|---|---|
 | how the graph reaches the hardware | `torch.compile` -> torch-xla -> HLO -> `neuronx-cc` | `torch.compile` -> torch-mlir -> StableHLO -> `neuronx-cc`, **no XLA** |
 | status | working, tuned | **working**, un-tuned |
-| best measured decode | **22.25 tok/s** @ batch 8 | **30.84 tok/s** @ batch 8 (5.0x over batch 1) |
+| best measured decode | **22.25 tok/s** @ batch 8 | **32.3 tok/s** @ batch 8 (fused HC-Sinkhorn NKI kernel: +9% over the same-build un-fused baseline; 5.0x over batch 1) |
 | golden argmax | matches | matches |
 
 **These two figures use different measurement conventions, so read them carefully.** The XLA
@@ -24,11 +24,11 @@ number is steady-state decode (prefill-excluded); the native number is aggregate
 weights out of HBM and does little math per token -- so batch size dominates throughput. The
 one clean apples-to-apples is batch 1 vs batch 1: XLA measures **1.35 tok/s**, native **6.2**,
 so the native path is well ahead at batch 1. The fuller picture: native decode now scales to a
-**5.0x aggregate at batch 8** (30.84 tok/s, golden token matched), then hits an HBM ceiling --
+**5.0x aggregate at batch 8** (30.84 tok/s un-fused; a fused HC-Sinkhorn NKI kernel lifts this ~9% to 32.3, golden matched), then hits an HBM ceiling --
 batch 16 is *lower* (22.89 tok/s) and batch 32 does not fit (OOM) at 43 layers. The XLA path
 keeps gaining out to **37.81 tok/s at batch 128** because its expert kernel already batches;
 getting the native path past the batch-8 wall needs a batch-aware MoE kernel and/or weight
-quantisation, which is in progress.
+quantisation -- not more kernel fusion (see *Pushing decode throughput* below).
 
 ## Why bother with the native path at all
 
@@ -42,6 +42,48 @@ later, not for what it measures now:
 
 None of that shows up in a tok/s number. It shows up in how quickly the next optimisation
 can be attempted.
+
+## Pushing decode throughput: what moved it, what didn't
+
+Once the native path decoded correctly, the question was how much faster it could go at the
+batch-8 ceiling. The answer, after a set of controlled A/B runs -- each golden-argmax
+verified, each compared against a *same-build* baseline so stack drift can't masquerade as a
+win:
+
+**A fused HC-Sinkhorn NKI kernel: +9%** (29.59 -> 32.3 tok/s at batch 8, now on by default).
+The hyper-connection boundary runs a Sinkhorn normalisation (two sigmoids, a row softmax,
+~20 iteration steps) twice per layer -- 86 tiny-op sequences per decode step. Collapsing each
+into a single kernel removes the launch/scheduling overhead that dominates at low batch.
+
+To spend the rest of the effort well, a skip-block probe measured where the decode step goes:
+**~74% attention, ~26% MoE.** Two more kernels were then written, simulator-validated, and run
+on-device. Both were numerically exact; neither was faster:
+
+| kernel | correct | throughput | why |
+|---|---|---|---|
+| fused HC-Sinkhorn | yes | **+9%** | many tiny ops, launch-overhead-bound -> fusion wins |
+| dual-source attention (both score matmuls + shared softmax + both output matmuls, fused) | yes | -1% | those are batched GEMMs the compiler already lowers well; a hand kernel can't beat them |
+| compressed-KV scatter write | yes | -2% | the existing full-buffer update is already memory-optimal |
+
+The pattern is consistent: **NKI fusion pays off on op-overhead-bound work (many small ops),
+not on compute-bound matmuls the compiler already schedules well.** A skip-probe on the
+compressed-sparse-attention path confirmed it is not a bottleneck either -- removing it does
+not speed decode up. So the fusion lever is essentially spent at +9%; the rest of the
+attention is dense projection matmuls that are already efficient.
+
+Reshaping parallelism didn't help either. Raising expert-parallel degree to 16 leaves zero
+KV-cache budget (per-rank expert weight is EP-invariant, while the intermediate shard
+doubles), and dropping it to 4 fails to build its collectives. Expert-parallel is not a free
+throughput lever for this model on this hardware.
+
+**Where the next real gain is:** *reducing* the matmul work rather than fusing it -- running
+the attention and expert GEMMs in FP8/low precision. The model side of that is implemented; it
+is currently gated by compiler support for the FP8 format on this hardware generation, and
+should unlock on a newer compiler.
+
+One native-path payoff showed up throughout: every kernel above was validated on a CPU
+simulator in minutes before it ever compiled for the device, which is what made trying (and
+rejecting) three kernels in a day practical.
 
 ## What each folder contains
 
