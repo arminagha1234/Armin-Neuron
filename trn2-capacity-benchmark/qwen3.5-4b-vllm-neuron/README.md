@@ -8,6 +8,11 @@ the symptom.
 Final state: **coherence 3/3** — *"The capital of France is **Paris**."*,
 *"The largest planet in our solar system is **Jupiter**."*, *"4"*.
 
+> **Throughput work lives in [`THROUGHPUT.md`](THROUGHPUT.md).** This file is
+> about making the model *run*; that one is about making it fast — 0.054 ->
+> 0.775 RPS/chip (14.4x), the `num_gpu_blocks` ceiling, why the model is now
+> prefill-bound rather than decode-bound, and two changes that measured null.
+
 ## The model package
 
 `install_qwen35.sh` installs a `qwen3_5` package into `vllm_neuron/model/` and

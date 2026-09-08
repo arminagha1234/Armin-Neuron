@@ -12,8 +12,8 @@ does not work, and the writeup below says so.
 | Model | native PyTorch | vLLM-Neuron |
 |---|---|---|
 | **Qwen3-8B** | 10,472 tok/s, MFU 60.3% | **13,579 tok/s**, 4.13 RPS/replica, coherence 3/3 |
-| **Qwen3.5-4B** | 16,847 tok/s prefill, p50 119 ms | **validated 3/3** ([port](qwen3.5-4b-vllm-neuron/)) |
-| **Gemma-4-31B-it** | blocked — `device barrier 2` at TP>=8 | TTFT 0.62 s, 2.50 RPS/replica, coherence 3/3 |
+| **Qwen3.5-4B** | 16,847 tok/s prefill, p50 119 ms | **validated 3/3**, tuned to **0.775 RPS/chip** = 14.4x stock ([port](qwen3.5-4b-vllm-neuron/), [throughput](qwen3.5-4b-vllm-neuron/THROUGHPUT.md)) |
+| **Gemma-4-31B-it** | blocked — `device barrier 2` at TP>=8 | TTFT 0.62 s, 2.50 RPS/replica, coherence 3/3; **7.66 RPS/box at TP16**, MFU 16.0% ([findings](gemma4-31b-findings/PREFILL_FALLBACK.md)) |
 | **Gemma-4-E2B-it** | 9,688 tok/s prefill (XLA), argmax 2/3 | **broken — 0/3** ([findings](gemma4-e2b-findings/)) |
 
 ![matrix](results/charts/03_matrix.png)
@@ -33,7 +33,15 @@ HBM bandwidth or host CPU. It is labelled as such in every chart.
 | Qwen3-8B | 3500 / 1 | 4.13 | 4 | 66.1 | 4.13 |
 | Gemma-4-E2B | 3500 / 1 | 2.77 | 1 | 177.3 | 11.08 |
 | Gemma-4-31B-it | 3500 / 50 | 2.50 | 32 | 5.0 | — (spans 8 chips) |
+| Gemma-4-31B-it | 3461 / 50 | 1.91 | 16 | 7.66 | — (spans 4 chips) |
 | Qwen3.5-4B | 2000 / 50 | 0.157 | 4 | 2.5 | 0.157 |
+| Qwen3.5-4B *(tuned)* | 1811 / 50 | **0.775** | 4 | **12.4** | 0.775 |
+
+The two later rows are throughput work done after the original sweep. **31B at
+TP16 beats TP32 per box** (7.66 vs 5.0) — half the chips per replica, four
+replicas instead of two, and 31B saturates at low concurrency anyway. The tuned
+Qwen3.5 row is 14.4x the stock configuration; the ledger is in
+[`qwen3.5-4b-vllm-neuron/THROUGHPUT.md`](qwen3.5-4b-vllm-neuron/THROUGHPUT.md).
 
 ![instances](results/charts/08_instances_3xl_vs_48xl.png)
 
@@ -50,6 +58,13 @@ because they were measured at TP=32 and TP=4-with-decode respectively.
 prefill only. Measured end to end on vLLM with 50 output tokens, the same model
 does 0.157 RPS/replica — decode costs 6.4 s against prefill's 0.12 s, roughly
 50x. Any capacity estimate built on a prefill number is optimistic by that ratio.
+
+That ratio is not fixed, and on Qwen3.5 it inverted. After the DeltaNet prefill
+kernel fix and block-count tuning, decode is 45% of e2e and prefill is the
+binding constraint: the peak (0.775 RPS/chip) sits at 70% of the prefill-only
+ceiling (1.105 RPS/chip), so **a free decode would buy at most 1.43x**. Re-derive
+the split per configuration before choosing what to optimise — we spent a cycle
+attacking decode on a model that had become prefill-bound.
 
 ## What is worth reusing
 
@@ -83,6 +98,26 @@ weight on 20 of 35 layers) was found and fixed without restoring coherence.
 A concurrency sweep to 128 showed 31B is **already saturated at concurrency 16**.
 Also records that an existing d-tiled NKI decode kernel for head_dim 256/512
 gives *no* speedup, because per-request decode is host-dispatch-bound.
+
+[`PREFILL_FALLBACK.md`](gemma4-31b-findings/PREFILL_FALLBACK.md) adds the same
+result for the **prefill** kernel, measured this time. 31B runs a
+score-materializing torch SDPA fallback because `GEMMA4_V2_PREFILL` defaults off;
+turning the NKI kernel on costs **33% throughput** (7.66 -> 5.14 RPS/box) at 3.5k
+tokens. It provably engages (prefill NEFF 12.7 MB -> 51.5 MB) and stays coherent,
+so this is a pure regression — and almost certainly why the flag ships off,
+despite an in-file comment claiming "default on". Also: `verified_kernel_ab.json`
+is not an A/B (its `kernel_off` side is `null`), and `GEMMA4_SWA_SKIP` is a no-op
+in Public_Final (identical graph hash).
+
+### [`qwen3.5-4b-vllm-neuron/THROUGHPUT.md`](qwen3.5-4b-vllm-neuron/THROUGHPUT.md) — 14.4x, and two null results
+
+Qwen3.5 drives most of the fleet estimate (500 RPS target, 10x the others). Full
+ledger from 0.054 to 0.775 RPS/chip: what worked (NKI decode, block count,
+blocked triangular inverse), what the `num_gpu_blocks` ceiling is (**200**; 230
+and 260 both die `NRT_RESOURCE`), and two things that measured null — a
+transposed recurrent-state layout intended to kill the decode transposes, and a
+4x decode difference between DLC builds that we explicitly do **not** claim
+credit for.
 
 ## FP8
 
