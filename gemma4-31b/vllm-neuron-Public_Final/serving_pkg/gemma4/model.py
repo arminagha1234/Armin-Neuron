@@ -49,6 +49,11 @@ import os as _os
 # OFF by default. Opt in with GEMMA4_V2_PREFILL=1 (requires the kernel module to
 # be importable). Published public benchmark numbers use the default (CTE path).
 _USE_V2_PREFILL = _os.environ.get("GEMMA4_V2_PREFILL", "0") == "1"
+
+# --- Gemma4 KV sharing (num_kv_shared_layers). See patch notes / HF
+# modeling_gemma4.py. Layers at/after the sharing boundary reuse the K/V of the
+# last pre-boundary layer of the SAME attention type. OFF by default. ---
+_KV_SHARE = _os.environ.get("GEMMA4_KV_SHARE", "0") == "1"
 _V2_PREFILL = None
 _v2_can_run = None
 if _USE_V2_PREFILL:
@@ -249,6 +254,25 @@ class Gemma4Attention(nn.Module):
         self.num_key_value_heads = config.get_layer_num_kv_heads(layer_idx)
         self.is_global = config.is_global_layer(layer_idx)
         self.k_eq_v = self.is_global and config.attention_k_eq_v
+
+        # --- KV sharing bookkeeping (mirrors HF modeling_gemma4.py) ---
+        _nks = int(getattr(config, "num_kv_shared_layers", 0) or 0)
+        _first = (config.num_hidden_layers - _nks) if _nks > 0 else config.num_hidden_layers
+        self.is_kv_shared_layer = bool(_KV_SHARE and _nks > 0 and layer_idx >= _first)
+        # donor = last layer BEFORE the boundary with the same attention type
+        _donor = None
+        if _KV_SHARE and _nks > 0:
+            for _j in range(_first - 1, -1, -1):
+                if bool(config.is_global_layer(_j)) == bool(self.is_global):
+                    _donor = _j
+                    break
+        self.kv_donor_idx = _donor
+        self.kv_donor = None          # wired by Gemma4Model.__init__
+        self.store_full_length_kv = bool(
+            _KV_SHARE and _nks > 0 and (not self.is_kv_shared_layer)
+            and layer_idx == _donor
+        )
+        self._shared_kv = None
 
         # Gemma4 uses scaling=1.0 (no 1/sqrt(head_dim))
         # WORKAROUND for inf2: 1/sqrt(d) compensates for bf16 precision
@@ -548,6 +572,18 @@ class Gemma4Attention(nn.Module):
             positions, device=hidden_states.device, dtype=hidden_states.dtype
         )
         q, k = self._apply_partial_rotary(q, k, cos, sin)
+
+        # --- KV sharing: publish / reuse post-RoPE K,V ---
+        # Donors publish; shared layers substitute the donor's K,V for their own.
+        # Placed AFTER qk-norm and RoPE to match HF exactly. Because the cache
+        # write and the attention call below both consume these locals, this one
+        # substitution covers attention AND keeps the paged cache consistent.
+        if self.store_full_length_kv:
+            self._shared_kv = (k, v)
+        elif self.is_kv_shared_layer and self.kv_donor is not None:
+            _shared = self.kv_donor._shared_kv
+            if _shared is not None:
+                k, v = _shared
 
         # Step 5: Update KV Cache
         layer_name = f"layers.{self.layer_idx}.self_attn"
@@ -1163,6 +1199,14 @@ class Gemma4Model(nn.Module):
                 for layer_idx in range(config.num_hidden_layers)
             ]
         )
+
+        # Wire each KV-sharing layer to its donor module so it can read the
+        # donor's published post-RoPE K/V during the forward pass.
+        if _KV_SHARE and int(getattr(config, "num_kv_shared_layers", 0) or 0) > 0:
+            for _lyr in self.layers:
+                _attn = _lyr.self_attn
+                if _attn.is_kv_shared_layer and _attn.kv_donor_idx is not None:
+                    _attn.kv_donor = self.layers[_attn.kv_donor_idx].self_attn
 
         self.norm = Gemma4RMSNorm(
             config.hidden_size, config.rms_norm_eps, config.torch_dtype
