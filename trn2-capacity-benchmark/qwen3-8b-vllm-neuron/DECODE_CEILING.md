@@ -4,9 +4,16 @@ The headline number for this model (4.13 RPS/replica, 66 RPS/box, 131% of a
 50 RPS target) is measured at **one output token**. Re-measured with 50 output
 tokens under sustained load, it delivers **15.4 RPS/box — 31% of target**.
 
-Decode costs **259 ms/token**, which is 98% of end-to-end wall time and roughly
-**47x** the memory-bandwidth floor for an 8B bf16 model at TP=4. This is almost
-certainly a defect rather than a hardware limit, and it is not yet root-caused.
+Decode costs **259 ms/token** — 98% of end-to-end wall time and ~47x the
+memory-bandwidth floor for an 8B bf16 model at TP=4.
+
+**Root cause: the decode NEFF executes the full static `max_num_seqs` x context
+shape on every step**, regardless of how many sequences are actually active. The
+published run paid a 16-slot decode step to serve one sequence. Setting
+`max_num_seqs=1` drops decode to **11.27 ms/token (23x)**, and sweeping the knob
+for throughput lands on **`max_num_seqs=8`: 23.0 RPS/box, 1.49x the published
+config from one flag**. That is still only 46% of target, so the model needs
+~2.2 boxes rather than the ~0.8 implied by the 1-output-token number.
 
 ## Measurements
 
@@ -93,7 +100,89 @@ The bucket list was accepted and the graph genuinely changed (an extra NEFF
 compiled), and decode did not move at all. **Token-bucket padding is not the
 cause.** Recording this so the obvious fix is not retried.
 
-## Remaining hypotheses, in order
+## ROOT CAUSE: decode executes the full static `max_num_seqs` x context shape every step
+
+Neuron requires static shapes, so the decode NEFF is compiled for the worst case
+and runs **all** sequence slots and the **whole** context window on every step,
+regardless of how many sequences are actually active or how long the real context
+is. Two isolating measurements:
+
+| config | `max_num_seqs` | `max_model_len` | decode ms/token | vs baseline |
+|---|---:|---:|---:|---:|
+| baseline | 16 | 4096 | 259.15 | 1.00x |
+| shrink the seq bucket | **1** | 4096 | **11.27** | **23.0x** |
+| shrink the context 4x | 16 | 1024 | 49.81 | 5.20x |
+
+Decode cost is proportional to `max_num_seqs x max_model_len`. At
+`max_num_seqs=1` decode is 11.27 ms/token — within 2x of the ~5.5 ms bandwidth
+floor, i.e. finally sane. The published run paid the full 16-slot cost while
+serving **one** sequence.
+
+This also explains why the defect was invisible before: at 1 output token you pay
+one decode step and prefill dominates, so a 16x-oversized decode step never shows
+up.
+
+### `max_num_seqs` is an unswept throughput knob
+
+Smaller buckets are cheaper per step but batch less, so there is an optimum.
+Sustained 40 s windows, 50 output tokens, 3,460-token prompt:
+
+| `max_num_seqs` | decode ms/tok | ms/tok **per seq** | peak RPS/chip | RPS/box | % of 50 RPS target |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 11.27 | 11.27 | 1.252 | 20.0 | 40% |
+| 2 | 24.47 | 12.24 | 1.188 | 19.0 | 38% |
+| 4 | 40.48 | 10.12 | 1.353 | 21.6 | 43% |
+| **8** | **72.31** | **9.04** | **1.438** | **23.0** | **46%** |
+| 16 *(published)* | 259.15 | 16.20 | 0.963 | 15.4 | 31% |
+
+**`max_num_seqs=8` is optimal and gives 1.49x the published configuration**
+(0.963 -> 1.438 RPS/chip) from a single flag, no code change. Boxes for 50 RPS:
+3.2 -> **2.2**.
+
+There is a **superlinear cliff between 8 and 16**: doubling the bucket multiplies
+decode by 3.58x, and per-sequence efficiency degrades from 9.04 to 16.20 ms/token
+having improved monotonically up to that point. Something changes qualitatively at
+16 — plausibly an SBUF/tiling capacity threshold that pushes the decode working
+set into spilling. Worth a profile at MNS=8 vs 16 to confirm, since the cliff is
+where the remaining easy factor of ~1.8x on per-sequence efficiency lives.
+
+### Why the profile looked the way it did
+
+The 82% GpSimd / 98.6% dynamic-DMA / 15M-packet picture is the *symptom* of
+executing a 16x-oversized decode step, not an independent bug: the graph moves
+21.6 GB of HBM per token against a ~4 GB weight shard because it is scanning 16
+sequence slots x 4096 positions x 36 layers every time.
+
+## Hypotheses tested and falsified
+
+Three plausible causes were measured and ruled out. All three left decode within
+3% of baseline, so none of them should be retried:
+
+| hypothesis | test | result |
+|---|---|---|
+| token-bucket padding | `num_batched_tokens_buckets [16,4096]` | 258.57 ms/tok — **1.00x** |
+| oversized KV block pool | `--num-gpu-blocks-override 512` (auto-sized was 192,928 tokens = 47x one request) | 258.42 ms/tok — **1.00x** |
+| per-layer KV `index_put_` scatter | disabled the scatter entirely (breaks correctness) | 250.73 ms/tok — **1.03x**, so the scatter is only **3%** |
+
+The KV-scatter result is worth keeping in mind: `NF.attention_decode`'s own
+`update_cache=True` path performs the same `index_put_` pattern internally
+(`attention_decode.py` ~797-800), so moving the scatter into the kernel would not
+have helped either.
+
+## Cross-model implication
+
+**This is not Qwen3-8B-specific.** Any model on this stack pays decode cost
+proportional to its `max_num_seqs` bucket rather than to actual load, so the knob
+needs sweeping per model. Two immediate consequences for this study:
+
+- **Qwen3.5-4B** was measured at `max_num_seqs=16`. Since it dominates the fleet
+  estimate, a sweep there is the highest-value follow-up in the whole study.
+- **Gemma-4-31B** was measured at `max_num_seqs=32` — beyond the cliff observed
+  here. The `gemma4-31b/` README independently found MNS=16 optimal with 32
+  regressing; this gives the mechanism, and means the 7.66 RPS/box figure is
+  likely understated.
+
+## Superseded hypotheses (kept for the record)
 
 1. **Decode re-runs the full-context forward.** The exact prefill-time match
    points here. Diagnostic: watch the engine's own metrics during a pure decode
@@ -123,7 +212,8 @@ realistic output length it does not:
 | Model | target | RPS/box | % of target |
 |---|---:|---:|---:|
 | Qwen3-8B @ 1 out tok | 50 | 65.7 | 131% |
-| **Qwen3-8B @ 50 out tok** | 50 | **15.4** | **31%** |
+| Qwen3-8B @ 50 out tok, `MNS=16` (published cfg) | 50 | 15.4 | 31% |
+| **Qwen3-8B @ 50 out tok, `MNS=8` (tuned)** | 50 | **23.0** | **46%** |
 | Qwen3.5-4B @ 50 out tok | 500 | 12.4 | 2.5% |
 | Gemma-4-31B @ 50 out tok | 50 | 7.66 | 15% |
 | Gemma-4-E2B | 50 | — | incoherent |
@@ -143,12 +233,16 @@ Weights are cached on FSX at `$FSX/models/Qwen3-8B` (16 GB, pulled in 37 s).
 
 ```bash
 python3 mk_qwen3.py            # 14 asserted edits, registers Qwen3ForCausalLM
+# max_num_seqs=8 is the throughput optimum -- NOT 16. See the sweep above.
 vllm serve $FSX/models/Qwen3-8B --served-model-name q38b \
-  --tensor-parallel-size 4 --max-model-len 4096 --max-num-seqs 16 \
+  --tensor-parallel-size 4 --max-model-len 4096 --max-num-seqs 8 \
   --max-num-batched-tokens 4096 --no-enable-prefix-caching \
   --additional-config '{"neuron_config":{"num_batched_tokens_buckets":[4096],
-    "num_seqs_buckets":[16],"on_device_sampling_config":{"all_greedy":true}}}'
+    "num_seqs_buckets":[8],"on_device_sampling_config":{"all_greedy":true}}}'
 ```
+
+Keep `num_seqs_buckets` in step with `--max-num-seqs`; the bucket is what the
+decode graph is compiled against, and it is what costs you.
 
 Ready in ~200 s from a cold cache. Measure with `max_tokens=min_tokens=50` and
 `ignore_eos: true` so the output length is exact, and use sustained load windows

@@ -11,7 +11,7 @@ does not work, and the writeup below says so.
 
 | Model | native PyTorch | vLLM-Neuron |
 |---|---|---|
-| **Qwen3-8B** | 10,472 tok/s, MFU 60.3% | **13,579 tok/s**, 4.13 RPS/replica, coherence 3/3 — but only **31% of target** at 50 output tokens ([findings](qwen3-8b-vllm-neuron/DECODE_CEILING.md)) |
+| **Qwen3-8B** | 10,472 tok/s, MFU 60.3% | **13,579 tok/s**, 4.13 RPS/replica, coherence 3/3 — but only **46% of target** at 50 output tokens, even tuned ([findings](qwen3-8b-vllm-neuron/DECODE_CEILING.md)) |
 | **Qwen3.5-4B** | 16,847 tok/s prefill, p50 119 ms | **validated 3/3**, tuned to **0.775 RPS/chip** = 14.4x stock ([port](qwen3.5-4b-vllm-neuron/), [throughput](qwen3.5-4b-vllm-neuron/THROUGHPUT.md)) |
 | **Gemma-4-31B-it** | blocked — `device barrier 2` at TP>=8 | TTFT 0.62 s, 2.50 RPS/replica, coherence 3/3; **7.66 RPS/box at TP16**, MFU 16.0% ([findings](gemma4-31b-findings/PREFILL_FALLBACK.md)) |
 | **Gemma-4-E2B-it** | 9,688 tok/s prefill (XLA), argmax 2/3 | **broken — 0/3** ([findings](gemma4-e2b-findings/)) |
@@ -31,7 +31,8 @@ HBM bandwidth or host CPU. It is labelled as such in every chart.
 | Model | in / out | RPS/replica | TP | RPS / 48xl | RPS / 3xl |
 |---|---|---:|---:|---:|---:|
 | Qwen3-8B | 3500 / 1 | 4.13 | 4 | 66.1 | 4.13 |
-| Qwen3-8B *(50 out tok)* | 3460 / **50** | **0.963** | 4 | **15.4** | 0.963 |
+| Qwen3-8B *(50 out tok, `MNS=16`)* | 3460 / **50** | 0.963 | 4 | 15.4 | 0.963 |
+| Qwen3-8B *(50 out tok, `MNS=8` tuned)* | 3460 / **50** | **1.438** | 4 | **23.0** | 1.438 |
 | Gemma-4-E2B | 3500 / 1 | 2.77 | 1 | 177.3 | 11.08 |
 | Gemma-4-31B-it | 3500 / 50 | 2.50 | 32 | 5.0 | — (spans 8 chips) |
 | Gemma-4-31B-it | 3461 / 50 | 1.91 | 16 | 7.66 | — (spans 4 chips) |
@@ -65,10 +66,19 @@ because they were measured at TP=32 and TP=4-with-decode respectively.
 >
 > Qwen3-8B and Gemma-4-E2B are measured at **1 output token**; Gemma-4-31B and
 > Qwen3.5-4B at **50**. Re-measuring Qwen3-8B at 50 output tokens under sustained
-> load drops it from 65.7 to **15.4 RPS/box** — from 131% of its target to **31%**
-> — because decode costs **259 ms/token**, roughly 47x the memory-bandwidth floor
-> for an 8B bf16 model at TP=4. Details and the falsified first hypothesis are in
-> [`qwen3-8b-vllm-neuron/DECODE_CEILING.md`](qwen3-8b-vllm-neuron/DECODE_CEILING.md).
+> load drops it from 65.7 to **15.4 RPS/box** — from 131% of its target to **31%**.
+>
+> Root cause: **the decode graph executes the full static `max_num_seqs` x context
+> shape every step**, regardless of how many sequences are actually active, so the
+> published run paid a 16-slot decode step to serve one sequence. Sweeping that
+> knob lands on `max_num_seqs=8` for **23.0 RPS/box, 1.49x** the published config
+> from a single flag. See
+> [`qwen3-8b-vllm-neuron/DECODE_CEILING.md`](qwen3-8b-vllm-neuron/DECODE_CEILING.md),
+> which also records three falsified hypotheses so they are not retried.
+>
+> **`max_num_seqs` therefore needs sweeping for every model on this stack** — cost
+> tracks the bucket, not the load. Qwen3.5-4B was measured at 16 and Gemma-4-31B at
+> 32, both unswept.
 >
 > **At 50 output tokens, none of the four models currently meets its target.**
 > Assume the E2B row carries the same 1-output-token optimism until re-measured.
