@@ -10,10 +10,10 @@
 > **Bottom line:** Trn2 (TP=32, 8 chips) serves cold in ~0.22 s @4k, ~0.75 s @16k, ~4.06 s @64k —
 > **faster than a comparable-scale 2-GPU H100 (×2 80GB) at every size.**
 >
-> **Want to reproduce it?** → **[LAUNCH.md](./LAUNCH.md)** is a copy-paste, line-by-line runbook.
-> First check you can clear these three gates — nothing runs without them:
-> 1. a **trn2.48xlarge** (Trainium2) — reserved via **Capacity Blocks**, not on-demand
-> 2. **vLLM-Neuron Beta image access** — your AWS account must be granted ECR pull by the Neuron team
+> **Want to reproduce it?** → **[LAUNCH.md](./LAUNCH.md)** is a copy-paste, 4-step runbook.
+> First check you can clear these gates — nothing runs without them:
+> 1. a **trn2.48xlarge** (Trainium2) — trn2 is offered via EC2 **Capacity Blocks**
+> 2. the **public** Neuron vLLM image — pulled from Neuron's public ECR gallery (**no private/beta access**)
 > 3. **Gemma4-31B weights** — gated on Hugging Face (accept the license), or provided out-of-band
 >
 > **Glossary:** *cold* = no cache reuse · *no-APC* = automatic prefix caching off · *TTFT* = time to
@@ -75,26 +75,17 @@ Trn2 TP32 (4.06 s) beats the 2× H100 80GB config (5.78 s)**. Trn2's win widens 
 [`../vllm-neuron-4k_16k_32k_64_PublicVLLM`](../vllm-neuron-4k_16k_32k_64_PublicVLLM). This folder is
 the honest cold floor; TP8/TP16's real value is throughput / $-per-token and replica density, not cold TTFT.
 
-## Just want to run it? → [LAUNCH.md](./LAUNCH.md)
+## Run it → [LAUNCH.md](./LAUNCH.md)
 
-## Reproduce in 3 steps
-1. **Set up the container** — [SETUP.md](./SETUP.md).
-2. **Get this benchmark (in the container):**
-   ```bash
-   git clone https://github.com/arminagha1234/Armin-Neuron.git
-   cd Armin-Neuron/gemma4-31b/vllm-neuron-4k_16k_32k_64k_no_APC
-   ```
-3. **Run it:**
-   ```bash
-   MODEL=/root/models/gemma-4-31b-it bash run_benchmark.sh
-   ```
-   It launches a **single-shot** server (LEN=16384) for 4k/8k/16k and a **segmented** server
-   (LEN=66560, seg=8192) for 32k/64k, runs the concurrency sweep with unique random prompts, and
-   writes `results_<timestamp>/` (per-size JSON + `summary.txt` + `summary.csv`).
-   For the −33% long-context numbers, apply the windowed-prior patch first:
-   `python3 patches/patch_swa_window_prior_v2.py` (backs up model.py; see the finding doc).
+**[LAUNCH.md](./LAUNCH.md)** is the full copy-paste runbook — 4 steps on a trn2.48xlarge using the
+**public** Neuron vLLM image (**no private/beta access**): (1) check you're on the latest public image,
+(2) pull it if not, (3) `git clone` this repo, (4) one `docker run` that runs the whole cold sweep and
+writes `results_<timestamp>/` (per-size JSON + `summary.txt` + `summary.csv`). It launches a **single-shot**
+server (LEN=16384) for 4k/8k/16k and a **segmented** server (LEN=66560, seg=8192) for 32k/64k. Environment
+prerequisites (instance, driver, weights) are in **[SETUP.md](./SETUP.md)**; full measured tables are in
+**[RESULTS.md](./RESULTS.md)**.
 
-   Regenerate the charts: `python3 make_perf_chart.py` → `assets/*.png`.
+(Maintainer note: regenerate the charts with `python3 make_perf_chart.py && python3 make_perf_chart_tp.py` → `assets/*.png`.)
 
 ## What "single-shot" means (it is not a vLLM flag)
 The vLLM-Neuron plugin prefills the whole prompt in one pass when
