@@ -76,11 +76,12 @@ because they were measured at TP=32 and TP=4-with-decode respectively.
 > [`qwen3-8b-vllm-neuron/DECODE_CEILING.md`](qwen3-8b-vllm-neuron/DECODE_CEILING.md),
 > which also records three falsified hypotheses so they are not retried.
 >
-> Does it generalize? **Tested on Qwen3.5-4B: no.** Its decode does not scale with
-> the bucket (best at 16), and its throughput is flat across the knob (0.779 vs
-> 0.775 RPS/chip) because it is prefill-bound. So `max_num_seqs` matters when decode
-> is on the critical path — worth *checking* per model, not assuming. Gemma-4-31B
-> (MNS=32, 50 out tok) is still untested.
+> Does it generalize? **No — swept on all three working models and they disagree.**
+> Qwen3-8B peaks at MNS=8 with a superlinear cliff at 16; **Gemma-4-31B improves
+> monotonically and peaks at 32** (so its published 7.66 RPS/box was already the best
+> setting); Qwen3.5-4B is **flat** across the knob because it is prefill-bound. The
+> knob is worth 1.49x on one model, nothing on another, and points the opposite way
+> on a third. **There is no transferable default — sweep it per model and per shape.**
 >
 > **At 50 output tokens, none of the four models currently meets its target.**
 > Assume the E2B row carries the same 1-output-token optimism until re-measured.

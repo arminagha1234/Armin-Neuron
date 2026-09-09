@@ -199,11 +199,38 @@ the critical path, and is worth checking rather than assumed.** For Qwen3-8B at
 50 output tokens decode is 98% of e2e and the knob is worth 1.49x. For Qwen3.5 it
 is worth nothing.
 
-**Gemma-4-31B remains untested.** It was measured at `max_num_seqs=32` with 50
-output tokens, and the `gemma4-31b/` README independently found MNS=16 optimal
-with 32 regressing — but on a different shape (in=1024/out=256, TP=32), so it is
-not evidence for our configuration. Whether 7.66 RPS/box is understated is an open
-question, not a claim.
+### Gemma-4-31B: also swept, and it goes the other way
+
+TP=16, `LEN=4096`, 3,461-token prompt, 50 output tokens, sustained windows:
+
+| `max_num_seqs` | decode ms/tok | ms/tok **per seq** | peak RPS / 4 chips | RPS/box | % of 50 RPS target |
+|---:|---:|---:|---:|---:|---:|
+| 8 | 51.88 | 6.49 | 1.496 | 5.98 | 12% |
+| 16 | 67.45 | 4.22 | 1.792 | 7.17 | 14% |
+| **32** *(as published)* | — | — | **1.91** | **7.66** | **15%** |
+
+31B improves **monotonically with larger** buckets — the opposite of Qwen3-8B — so
+the published MNS=32 is the best of the three, and the earlier suspicion that 7.66
+RPS/box was measured at a bad setting is **wrong**. The `gemma4-31b/` README's
+"MNS=16 optimal, 32 regresses" result is from a different shape (in=1024 /
+out=256, TP=32) and does not transfer here.
+
+Note 31B *is* decode-bound (decode is 87-90% of e2e) and its decode does grow with
+the bucket (51.88 -> 67.45 ms), yet throughput still improves because per-sequence
+efficiency improves too (6.49 -> 4.22 ms/token/seq). Gains are saturating (+19.9%
+from 8 to 16, then +6.8% from 16 to 32), so MNS=64 is unlikely to be worth much.
+
+### Summary: three models, three behaviours
+
+| model | decode share of e2e | best MNS tested | shape of the curve |
+|---|---|---|---|
+| Qwen3-8B | 98% | **8** | improves to 8, **superlinear cliff** at 16 |
+| Gemma-4-31B | 87-90% | **32** (highest tested) | improves monotonically with MNS |
+| Qwen3.5-4B | 45% | 4 or 16 (tie) | **flat** — prefill-bound, knob is inert |
+
+There is **no transferable default**. The knob is worth 1.49x on one model, nothing
+on another, and points in the opposite direction on a third. Sweep it per model and
+per shape; do not port a value between them.
 
 ## Superseded hypotheses (kept for the record)
 
