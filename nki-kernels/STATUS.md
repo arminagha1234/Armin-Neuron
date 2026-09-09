@@ -50,22 +50,50 @@ trn2.48xlarge, TP=4, MAX_LEN=2048, Qwen3.5-4B (head_dim=256), conc=1:
 Identical TTFT (5.44s for both — kernel only runs in decode).
 Identical correctness on the probe battery.
 
-**The above was measured single-stream at `MAX_NUM_SEQS=1`** (the roadmap item
-"Concurrency stress with MAX_NUM_SEQS=8" was never done, and `serve.sh` defaults
-to 1). Re-measured at `MAX_NUM_SEQS=16` — the configuration the published
-capacity numbers actually use — the ordering **reverses**:
+**Terminology first, because "eager" is overloaded three ways in this stack and
+the word is misleading here.** In the vLLM-Neuron serving path there is *no*
+op-by-op eager execution: `neuron_model_runner.py` calls `torch.compile` with a
+registered `"vllm_neuron"` backend (line ~1385, backend in
+`vllm_neuron/compile/backend.py`), and `NeuronConfig` exposes **no** compile
+knob — it is unconditional. Both arms below are
+`torch.compile(backend="vllm_neuron")` -> HLO -> neuronx-cc -> NEFF, and the
+`QWEN35_NKI_DECODE=0` arm compiles **5 NEFFs** including a 5,075,250-byte decode
+graph. The only difference is *what the compiler lowers*: plain PyTorch split-K
+ops, or a hand-written NKI kernel injected through `wrap_nki`.
+
+So "eager" in this file means **"the plain-PyTorch source path, which
+torch.compile + neuronx-cc then fuse"** — not eager execution. The three senses
+in play across the repo:
+
+| "eager" | means |
+|---|---|
+| here / `QWEN35_NKI_DECODE=0` | PyTorch-source path, still fully torch.compile'd |
+| native TorchNeuron | genuine op-by-op `torch.device("neuron")`, no compile |
+| `attn_implementation: "eager"` in trainium-optimizer recipes | HuggingFace's attention selector (eager vs sdpa vs flash), orthogonal to compilation |
+
+This matters for how the result reads: the kernel is not beating an interpreter,
+it is beating `torch.compile` with full optimisation opportunity. Note the
+compiler produced the *smallest* decode graph (5.07 MB vs v1's 7.28 MB and v2's
+7.82 MB) and the *slowest* one.
+
+**The original measurement was single-stream at `MAX_NUM_SEQS=1`** (the roadmap
+item "Concurrency stress with MAX_NUM_SEQS=8" was never done, and `serve.sh`
+defaults to 1). Re-measured at `MAX_NUM_SEQS=16` — the configuration the
+published capacity numbers actually use — the ordering **reverses**:
 
 ```
 trn2.48xlarge, TP=4, MAX_LEN=2048, blocks=200, MNS=16, 1811-tok prompt,
 sustained windows, one server at a time:
 
-  EAGER  (QWEN35_NKI_DECODE=0)   295.01 ms/token   0.165 RPS/chip   2.6 RPS/box
-  NKI v1 (QWEN35_NKI_DECODE=1)    61.85 ms/token   0.514 RPS/chip   8.2 RPS/box
-  ratio                            4.77x FASTER    3.1x throughput
+  torch.compile'd PyTorch split-K  295.01 ms/token  0.165 RPS/chip  2.6 RPS/box
+    (QWEN35_NKI_DECODE=0, decode NEFF 5,075,250 B)
+  NKI v1                            61.85 ms/token  0.514 RPS/chip  8.2 RPS/box
+    (QWEN35_NKI_DECODE=1, decode NEFF 7,281,631 B)
+  ratio                              4.77x FASTER   3.1x throughput
 ```
 
 Decode ms/token was measured at both 50 and 200 output tokens and agreed to
-0.06 ms, so this is not noise. The reason for the reversal is that the eager
+0.06 ms, so this is not noise. The reason for the reversal is that the compiled
 PyTorch split-K materialises `[MNS x S_ctx]` score tensors every decode step,
 so its cost scales with the `max_num_seqs` bucket; the kernel's does not. At
 MNS=1 that penalty is invisible.
@@ -154,7 +182,7 @@ attempt):
 **Device A/B**, same node, same session, sequential, coherence-gated:
 
 ```
-  EAGER   295.01 ms/token   0.165 RPS/chip
+  torch.compile'd PyTorch  295.01 ms/token   0.165 RPS/chip
   v1       61.85 ms/token   0.514 RPS/chip
   v2       60.20 ms/token   0.522 RPS/chip     <- 1.027x vs v1
 ```
