@@ -526,6 +526,11 @@ work is ordered by what the curve exposed:
   the hyper-connection boundary, validated against float64 references and bit-identical to
   the unfused path. Built and measured, **not yet wired into the model's forward pass**;
   see the honesty note in that README about what the ratios do and do not mean.
+- [`dual-attention-fusion/`](dual-attention-fusion/) — the two-source decode attention
+  (sliding-window + compressed KV sharing one online softmax + per-head sink) fused into a
+  single flash NKI kernel. Fixes the batch-16 decode regression (+26.6%, 23.56 -> 29.83
+  tok/s, golden preserved) by removing the score-tensor spill; batch-gated auto-on at
+  batch >= 16. Includes the skip-MoE scaling decomposition and why batch 32 is an HBM wall.
 
 ## Reproducing
 
