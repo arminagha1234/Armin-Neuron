@@ -169,18 +169,41 @@ The KV-scatter result is worth keeping in mind: `NF.attention_decode`'s own
 (`attention_decode.py` ~797-800), so moving the scatter into the kernel would not
 have helped either.
 
-## Cross-model implication
+## Does it generalize? Tested on Qwen3.5-4B: NO
 
-**This is not Qwen3-8B-specific.** Any model on this stack pays decode cost
-proportional to its `max_num_seqs` bucket rather than to actual load, so the knob
-needs sweeping per model. Two immediate consequences for this study:
+The obvious inference is that every model on this stack should have `max_num_seqs`
+swept. We tested that on Qwen3.5-4B — the model that dominates the fleet estimate
+— and **it does not transfer**. Same box, same method, blocked inverse + NKI
+decode, `LEN=2048`, blocks=200, 1,811-token prompt, 50 output tokens:
 
-- **Qwen3.5-4B** was measured at `max_num_seqs=16`. Since it dominates the fleet
-  estimate, a sweep there is the highest-value follow-up in the whole study.
-- **Gemma-4-31B** was measured at `max_num_seqs=32` — beyond the cliff observed
-  here. The `gemma4-31b/` README independently found MNS=16 optimal with 32
-  regressing; this gives the mechanism, and means the 7.66 RPS/box figure is
-  likely understated.
+| `max_num_seqs` | decode ms/tok | peak RPS/chip | RPS/box | boxes for 500 RPS |
+|---:|---:|---:|---:|---:|
+| 4 | 23.02 | **0.779** | 12.5 | 40 |
+| 8 | 34.17 | 0.679 | 10.9 | 46 |
+| 16 *(as published)* | **15.60** | 0.775 | 12.4 | 40 |
+
+Two differences from Qwen3-8B:
+
+1. **Decode does not scale with the bucket** — it is *best* at MNS=16 (15.60 ms)
+   and worse at 4 and 8, non-monotonically. Qwen3.5 uses a different decode path
+   (the recurrent DeltaNet step plus the `head_dim=256` kernel) than Qwen3-8B's
+   `NF.attention_decode`, so the static-shape cost model does not apply.
+2. **Throughput is flat regardless** — 0.779 vs 0.775 RPS/chip between the best
+   and the published setting, inside noise. Because Qwen3.5 is **prefill-bound**
+   (0.906 s prefill out of ~1.28 s of service time), even a 1.5x decode regression
+   does not move the peak. That is the same conclusion the transposed-state
+   experiment reached from the other direction.
+
+So the correct statement is narrower: **`max_num_seqs` matters when decode is on
+the critical path, and is worth checking rather than assumed.** For Qwen3-8B at
+50 output tokens decode is 98% of e2e and the knob is worth 1.49x. For Qwen3.5 it
+is worth nothing.
+
+**Gemma-4-31B remains untested.** It was measured at `max_num_seqs=32` with 50
+output tokens, and the `gemma4-31b/` README independently found MNS=16 optimal
+with 32 regressing — but on a different shape (in=1024/out=256, TP=32), so it is
+not evidence for our configuration. Whether 7.66 RPS/box is understated is an open
+question, not a claim.
 
 ## Superseded hypotheses (kept for the record)
 
