@@ -19,6 +19,8 @@ into a **single online-softmax ("flash") NKI kernel** that never materialises th
 tok/s (+26.6%)** with the golden token preserved. At batch 8 it is neutral. That gap between
 "+26.6% at 16" and "neutral at 8" is the whole story, and it is explained below.
 
+![DeepSeek-V4-Flash native decode progress: batch-16 regression fixed by the flash dual-attn kernel, and the scaling ceiling that explains the residual](progress.png)
+
 ---
 
 ## The regression
